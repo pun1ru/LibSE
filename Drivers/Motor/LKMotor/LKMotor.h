@@ -1,5 +1,5 @@
-#ifndef _LK_DRIVER_H_
-#define _LK_DRIVER_H_
+#ifndef _LKMOTOR_H_
+#define _LKMOTOR_H_
 
 #include <stdint.h>
 #include "can_driver.h"

@@ -14,7 +14,15 @@ typedef enum {      //电机控制模式 Control mode
 typedef enum {
     MOTOR_DISABLED,
     MOTOR_ENABLED,
-    MOTOR_FAULT
+    MOTOR_FAULT,
+    MOTOR_OVERVOLTAGE,
+    MOTOR_UNDERVOLTAGE,
+    MOTOR_OVERCURRENT,
+    MOTOR_MOS_OVERTEMP,
+    MOTOR_COIL_OVERTEMP,
+    MOTOR_COMM_LOST,
+    MOTOR_OVERLOAD,
+    MOTOR_NO_FEEDBACK
 } MotorStatus_t;
 
 typedef struct {
@@ -28,8 +36,9 @@ typedef struct {
 } MotorCmd_t;
 
 typedef struct {
+    uint32_t timestamp;                  ///< Valid feedback frame count
     uint8_t error_id;                    ///< 电机错误码 Motor error code
-    uint8_t state ;                   ///< 电机错误状态 Motor error state
+    MotorStatus_t status;                ///< 电机状态 Motor status
     float position;                      ///< 电机原始角度 Raw motor angle
     float abs_angle;  ///< 归一化到单圈的角度 Single-turn angle
     float multi_angle; ///< 多圈角度 Multi-turn angle
@@ -44,6 +53,8 @@ typedef struct {
     void (*enable)(Motor_t *motor);
     void (*disable)(Motor_t *motor);
     void (*protect)(Motor_t *motor);
+    void (*sendcommand)(Motor_t *motor);
+    void (*sendgroupcommand)(Motor_t *motor);
     void (*clearerror)(Motor_t *motor);
     void (*getfeedback)(Motor_t *motor);
 } MotorOps_t;

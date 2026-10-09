@@ -1,156 +1,110 @@
-#include "DJI_Motor.h"
+#include "RMMotor.h"
 
-#include <math.h>
 #include <stddef.h>
 #include <string.h>
 
-#define DJI_ENCODER_COUNTS 8192.0f
-#define DJI_TWO_PI 6.283185307179586f
+#define RM_ENCODER_COUNTS 8192
+#define RM_TWO_PI 6.283185307179586f
 
-static driver_status_t DJIMotorGroup_Send(DJIMotorGroup_t *group)
+static uint8_t RMMotor_Slot(uint8_t motor_id)
 {
-    can_frame_t frame = {0};
-    uint8_t slot;
-    frame.id = 0x200U;
-    frame.length = 8U;
-    for (slot = 0U; slot < 4U; ++slot) {
-        frame.data[slot * 2U] = (uint8_t)(group->current[slot] >> 8);
-        frame.data[slot * 2U + 1U] = (uint8_t)group->current[slot];
-    }
-    return Can_Send(group->can, &frame);
+    return (uint8_t)((motor_id - 1U) % 4U);
 }
 
-static driver_status_t DJIMotor_Enable(Motor_t *base)
+static int16_t RMMotor_Setpoint(const RMMotor_t *motor)
 {
-    (void)base;
-    return DRIVER_OK;
+    float value = motor->base.motorcmd.current;
+    float limit = motor->motor_config.motor_type == RM_C610 ? RM_C610_CURRENT_LIMIT :
+                  motor->motor_config.motor_type == RM_C620 ? RM_C620_CURRENT_LIMIT :
+                  motor->motor_config.mode == RM_VOLTAGE ? RM_GM6020_VOLTAGE_LIMIT :
+                  RM_GM6020_CURRENT_LIMIT;
+
+    if (value > limit) {
+        value = limit;
+    } else if (value < -limit) {
+        value = -limit;
+    }
+    return (int16_t)value;
 }
 
-static driver_status_t DJIMotor_Disable(Motor_t *base)
+void RMMotor_SendGroupCommand(RMMotor_t *motor)
 {
-    DJIMotor_t *motor = (DJIMotor_t *)base;
-    int16_t previous = motor->group->current[base->id - 1U];
-    driver_status_t result;
-    motor->group->current[base->id - 1U] = 0;
-    result = DJIMotorGroup_Send(motor->group);
-    if (result != DRIVER_OK) {
-        motor->group->current[base->id - 1U] = previous;
+    RMMotorGroup_t *group = motor->group;
+    uint8_t data[8] = {0};
+
+    for (uint8_t slot = 0U; slot < 4U; ++slot) {
+        RMMotor_t *member = group->motors[slot];
+        if (member != NULL) {
+            int16_t value = RMMotor_Setpoint(member);
+            data[slot * 2U] = (uint8_t)((uint16_t)value >> 8);
+            data[slot * 2U + 1U] = (uint8_t)value;
+        }
     }
-    return result;
+    (void)CANTransmit_Enqueue(group->can, group->tx_id, data);
 }
 
-static driver_status_t DJIMotor_ClearError(Motor_t *base)
+static void RMMotor_SendFromBase(Motor_t *base)
 {
-    (void)base;
-    return DRIVER_NOT_SUPPORTED;
+    RMMotor_SendGroupCommand((RMMotor_t *)base);
 }
 
-static driver_status_t DJIMotor_SendCommand(Motor_t *base, const motor_cmd_t *command)
+static void RMMotor_Disable(Motor_t *base)
 {
-    DJIMotor_t *motor = (DJIMotor_t *)base;
-    float current;
-    int16_t previous;
-    driver_status_t result;
-    float limit = base->type == MOTOR_TYPE_DJI3508 ? 15999.0f : 9999.0f;
-    if (command->control_mode != MOTOR_MODE_CURRENT) {
-        return DRIVER_NOT_SUPPORTED;
-    }
-    if (!isfinite(command->current)) {
-        return DRIVER_INVALID_ARGUMENT;
-    }
-    current = command->current;
-    if (current > limit) {
-        current = limit;
-    } else if (current < -limit) {
-        current = -limit;
-    }
-    previous = motor->group->current[base->id - 1U];
-    motor->group->current[base->id - 1U] = (int16_t)current;
-    result = DJIMotorGroup_Send(motor->group);
-    if (result != DRIVER_OK) {
-        motor->group->current[base->id - 1U] = previous;
-    }
-    return result;
+    RMMotor_t *motor = (RMMotor_t *)base;
+    motor->base.motorcmd.current = 0.0f;
+    motor->base.feedback.status = MOTOR_DISABLED;
+    RMMotor_SendGroupCommand(motor);
 }
 
-static const MotorOps_t dji_motor_ops = {
-    DJIMotor_Enable, DJIMotor_Disable, DJIMotor_ClearError, DJIMotor_SendCommand
-};
-
-driver_status_t DJIMotorGroup_Init(DJIMotorGroup_t *group, can_t *can)
+void RMMotorGroup_Init(RMMotorGroup_t *group, FDCAN_HandleTypeDef *can,
+                       uint16_t tx_id)
 {
-    if (group == NULL || can == NULL) {
-        return DRIVER_INVALID_ARGUMENT;
-    }
     memset(group, 0, sizeof(*group));
     group->can = can;
-    return DRIVER_OK;
+    group->tx_id = tx_id;
 }
 
-driver_status_t DJIMotor_Init(DJIMotor_t *motor, DJIMotorGroup_t *group,
-                           motor_type_t type, uint8_t motor_id, float reduction_ratio)
+void RMMotor_Init(RMMotor_t *motor, RMMotorGroup_t *group,
+                  const RMMotorConfig_t *config)
 {
-    driver_status_t result;
-    if (motor == NULL || group == NULL || group->can == NULL ||
-        (type != MOTOR_TYPE_DJI2006 && type != MOTOR_TYPE_DJI3508) ||
-        motor_id < 1U || motor_id > 4U ||
-        !isfinite(reduction_ratio) || reduction_ratio <= 0.0f ||
-        group->motors[motor_id - 1U] != NULL) {
-        return DRIVER_INVALID_ARGUMENT;
-    }
-    result = Motor_Init(&motor->base, type, motor_id, &dji_motor_ops);
-    if (result != DRIVER_OK) {
-        return result;
-    }
+    memset(motor, 0, sizeof(*motor));
+    motor->motor_config = *config;
     motor->group = group;
-    motor->reduction_ratio = reduction_ratio;
-    motor->encoder_total = 0;
-    motor->last_encoder = 0U;
-    motor->measured_current = 0;
-    motor->first_frame = 1U;
-    group->motors[motor_id - 1U] = motor;
-    return DRIVER_OK;
+    motor->base.feedback.status = MOTOR_NO_FEEDBACK;
+    motor->base.motorcmd.control_mode = MODE_CURRENT;
+    motor->base.motorops.disable = RMMotor_Disable;
+    motor->base.motorops.protect = RMMotor_Disable;
+    motor->base.motorops.sendcommand = RMMotor_SendFromBase;
+    motor->base.motorops.sendgroupcommand = RMMotor_SendFromBase;
+    group->motors[RMMotor_Slot(config->motor_id)] = motor;
 }
 
-driver_status_t DJIMotor_OnFrame(DJIMotor_t *motor, const can_frame_t *frame)
+void RMMotor_Feedback(RMMotor_t *motor, const uint8_t data[8], uint16_t rec_id)
 {
-    motor_feedback_t *feedback;
-    uint16_t encoder;
-    int32_t delta;
-    int16_t speed_rpm;
-    if (motor == NULL || frame == NULL) {
-        return DRIVER_INVALID_ARGUMENT;
+    uint16_t feedback_id = motor->motor_config.motor_type == RM_GM6020 ?
+                           (uint16_t)(0x204U + motor->motor_config.motor_id) :
+                           (uint16_t)(0x200U + motor->motor_config.motor_id);
+    if (rec_id != feedback_id) {
+        return;
     }
-    if (frame->extended != 0U || frame->id != 0x200U + motor->base.id) {
-        return DRIVER_NOT_SUPPORTED;
+
+    uint16_t encoder = ((uint16_t)data[0] << 8) | data[1];
+    if (encoder >= RM_ENCODER_COUNTS) {
+        return;
     }
-    if (frame->length != 8U) {
-        return DRIVER_ERROR;
+
+    int16_t speed_rpm = (int16_t)(((uint16_t)data[2] << 8) | data[3]);
+    Feedback_t *feedback = &motor->base.feedback;
+    feedback->timestamp++;
+    feedback->position = (float)encoder * RM_TWO_PI / RM_ENCODER_COUNTS;
+    feedback->abs_angle = feedback->position;
+    feedback->velocity = (float)speed_rpm;
+    feedback->omega = feedback->velocity * RM_TWO_PI / 60.0f;
+    if (motor->motor_config.motor_type == RM_C620) {
+        feedback->temp = (float)data[6];
+    } else if (motor->motor_config.motor_type == RM_GM6020) {
+        feedback->temp = (float)data[7];
     }
-    encoder = ((uint16_t)frame->data[0] << 8) | frame->data[1];
-    if (encoder >= 8192U) {
-        return DRIVER_ERROR;
-    }
-    if (motor->first_frame != 0U) {
-        motor->encoder_total = encoder;
-        motor->first_frame = 0U;
-    } else {
-        delta = (int32_t)encoder - motor->last_encoder;
-        if (delta > 4096) {
-            delta -= 8192;
-        } else if (delta < -4096) {
-            delta += 8192;
-        }
-        motor->encoder_total += delta;
-    }
-    motor->last_encoder = encoder;
-    speed_rpm = (int16_t)(((uint16_t)frame->data[2] << 8) | frame->data[3]);
-    motor->measured_current = (int16_t)(((uint16_t)frame->data[4] << 8) | frame->data[5]);
-    feedback = &motor->base.feedback;
-    feedback->pos = (float)encoder * DJI_TWO_PI / DJI_ENCODER_COUNTS / motor->reduction_ratio;
-    feedback->multi_pos = (float)motor->encoder_total * DJI_TWO_PI /
-                          DJI_ENCODER_COUNTS / motor->reduction_ratio;
-    feedback->vel = (float)speed_rpm * DJI_TWO_PI / 60.0f / motor->reduction_ratio;
-    feedback->temp = (float)frame->data[6];
-    return DRIVER_OK;
+    feedback->error_id = 0U;
+    feedback->status = MOTOR_ENABLED;
 }
