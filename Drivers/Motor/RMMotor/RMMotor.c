@@ -81,6 +81,7 @@ void RMMotor_Init(RMMotor_t *motor, RMMotorGroup_t *group,
 
 void RMMotor_Feedback(RMMotor_t *motor, const uint8_t data[8], uint16_t rec_id)
 {
+    motor->base.feedback.timestamp++;
     uint16_t feedback_id = motor->motor_config.motor_type == RM_GM6020 ?
                            (uint16_t)(0x204U + motor->motor_config.motor_id) :
                            (uint16_t)(0x200U + motor->motor_config.motor_id);
@@ -95,7 +96,6 @@ void RMMotor_Feedback(RMMotor_t *motor, const uint8_t data[8], uint16_t rec_id)
 
     int16_t speed_rpm = (int16_t)(((uint16_t)data[2] << 8) | data[3]);
     Feedback_t *feedback = &motor->base.feedback;
-    feedback->timestamp++;
     feedback->position = (float)encoder * RM_TWO_PI / RM_ENCODER_COUNTS;
     feedback->abs_angle = feedback->position;
     feedback->velocity = (float)speed_rpm;

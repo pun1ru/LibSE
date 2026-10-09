@@ -36,7 +36,7 @@ typedef struct {
 } MotorCmd_t;
 
 typedef struct {
-    uint32_t timestamp;                  ///< Valid feedback frame count
+    uint32_t timestamp;                  ///< Feedback function call count
     uint8_t error_id;                    ///< 电机错误码 Motor error code
     MotorStatus_t status;                ///< 电机状态 Motor status
     float position;                      ///< 电机原始角度 Raw motor angle

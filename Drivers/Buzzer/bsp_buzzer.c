@@ -3,6 +3,9 @@
 #include "FreeRTOS.h"
 #include "task.h"
 #include "queue.h"
+#include "bsp_pwm.h"
+
+#include <math.h>
 TIM_HandleTypeDef *Buzzer_Tim;
 uint32_t Buzzer_Channel;
 
@@ -253,4 +256,25 @@ void buzzer_on(uint16_t psc, uint16_t pwm)
 void buzzer_off(void)
 {
     __HAL_TIM_SetCompare(Buzzer_Tim, Buzzer_Channel, 0);
+}
+
+void Buzzer_PlayPitch(uint8_t pitch)
+{
+    if (pitch == 0U) {
+        buzzer_off();
+        return;
+    }
+
+    float frequency = BUZZER_A4_FREQUENCY_HZ * powf(2.0f, ((float)pitch - 69.0f) / 12.0f);
+    BSP_PWM_SetFrequency(Buzzer_Tim, BUZZER_TIMER_CLOCK_HZ, (uint32_t)(frequency + 0.5f));
+    BSP_PWM_SetDutyPermille(Buzzer_Tim, Buzzer_Channel, 500U);
+}
+
+void Buzzer_PlayNotesV2(const MusicNoteV2_t *notes, uint32_t count)
+{
+    for (uint32_t i = 0U; i < count; ++i) {
+        Buzzer_PlayPitch(notes[i].pitch);
+        vTaskDelay(pdMS_TO_TICKS(notes[i].duration_ms));
+    }
+    buzzer_off();
 }

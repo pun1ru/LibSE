@@ -45,6 +45,7 @@ static void DMMotor_SendClearError(Motor_t *base)
 
 void DMMotor_Feedback(DMMotor_t *motor, const uint8_t data[8],uint16_t rec_id)
 {
+    motor->base.feedback.timestamp++;
     if(rec_id != motor->motor_config.feedback_id)
     {
         return;
@@ -54,7 +55,6 @@ void DMMotor_Feedback(DMMotor_t *motor, const uint8_t data[8],uint16_t rec_id)
     uint16_t position_raw = ((uint16_t)data[1] << 8) | data[2];
     uint16_t velocity_raw = ((uint16_t)data[3] << 4) | (data[4] >> 4);
     uint16_t torque_raw = ((uint16_t)(data[4] & 0x0FU) << 8) | data[5];
-    feedback->timestamp++;
     feedback->position = DMMotor_Decode(position_raw, limits->p_min,
                                         limits->p_max, 16U);
     feedback->abs_angle = feedback->position;

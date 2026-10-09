@@ -1,12 +1,12 @@
 /**
- * @file    MadWick.c
+ * @file    Madgwick.c
  * @brief   Madgwick AHRS 姿态解算实现
  * @note    纯 C 移植自 MadgwickAHRS.hpp
  *          核心：陀螺仪积分 + 梯度下降法加速度修正
  *          复用 algorism.h 的 InvSqrt()
  */
 
-#include "MadWick.h"
+#include "Madgwick.h"
 #include "algorism.h"
 #include <math.h>
 
@@ -19,7 +19,7 @@
  * @retval  void
  * @note    四元数初始化为 [1, 0, 0, 0]（无旋转），欧拉角清零
  */
-void MadWickAHRSInit(MadWickAHRS* m, float beta)
+void MadgwickAHRS_Init(MadgwickAHRS_t *m, float beta)
 {
     m->q[0] = 1.0f;
     m->q[1] = 0.0f;
@@ -48,7 +48,7 @@ void MadWickAHRSInit(MadWickAHRS* m, float beta)
  *          5. 四元数归一化
  *          6. 四元数 → 欧拉角
  */
-void MadWickAHRSUpdate(MadWickAHRS* m,
+void MadgwickAHRS_Update(MadgwickAHRS_t *m,
                        float gx, float gy, float gz,
                        float ax, float ay, float az,
                        float dt)
@@ -106,18 +106,23 @@ void MadWickAHRSUpdate(MadWickAHRS* m,
         s3 = 4.0f * q1q1 * q3 - q_2q1 * ax + 4.0f * q2q2 * q3 - q_2q2 * ay;
 
         /* 归一化步长 */
-        recip_norm = InvSqrt(s0 * s0 + s1 * s1 + s2 * s2 + s3 * s3);
-        s0 *= recip_norm;
-        s1 *= recip_norm;
-        s2 *= recip_norm;
-        s3 *= recip_norm;
+        float step_norm_sq = s0 * s0 + s1 * s1 + s2 * s2 + s3 * s3;
+        if (step_norm_sq > 0.0f) {
+            recip_norm = InvSqrt(step_norm_sq);
+            s0 *= recip_norm;
+            s1 *= recip_norm;
+            s2 *= recip_norm;
+            s3 *= recip_norm;
+        }
 
         /* ===== Step 3: 反馈修正 ===== */
         /* q_dot -= beta * s  (梯度下降方向修正陀螺积分) */
-        q_dot1 -= m->beta * s0;
-        q_dot2 -= m->beta * s1;
-        q_dot3 -= m->beta * s2;
-        q_dot4 -= m->beta * s3;
+        if (step_norm_sq > 0.0f) {
+            q_dot1 -= m->beta * s0;
+            q_dot2 -= m->beta * s1;
+            q_dot3 -= m->beta * s2;
+            q_dot4 -= m->beta * s3;
+        }
     }
 
     /* ===== Step 4: 欧拉积分 ===== */
@@ -139,10 +144,10 @@ void MadWickAHRSUpdate(MadWickAHRS* m,
                       2.0f * (m->q[0] * m->q[0] + m->q[1] * m->q[1]) - 1.0f)
              * 57.295779513f;
 
-    m->Pitch = atan2f(2.0f * (m->q[0] * m->q[1] + m->q[2] * m->q[3]),
+    m->Roll = atan2f(2.0f * (m->q[0] * m->q[1] + m->q[2] * m->q[3]),
                       2.0f * (m->q[0] * m->q[0] + m->q[3] * m->q[3]) - 1.0f)
              * 57.295779513f;
 
-    m->Roll  = asinf(-2.0f * (m->q[1] * m->q[3] - m->q[0] * m->q[2]))
+    m->Pitch = asinf(-2.0f * (m->q[1] * m->q[3] - m->q[0] * m->q[2]))
              * 57.295779513f;
 }

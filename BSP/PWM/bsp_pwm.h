@@ -9,5 +9,7 @@ void BSP_PWM_Stop(TIM_HandleTypeDef *htim, uint32_t channel);
 void BSP_PWM_SetPulse(TIM_HandleTypeDef *htim, uint32_t channel, uint32_t pulse);
 void BSP_PWM_SetDutyPermille(TIM_HandleTypeDef *htim, uint32_t channel,
                              uint16_t duty_permille);
+void BSP_PWM_SetFrequency(TIM_HandleTypeDef *htim, uint32_t timer_clock_hz,
+                          uint32_t frequency_hz);
 
 #endif

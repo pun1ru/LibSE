@@ -1,6 +1,18 @@
 #ifndef BSP_BUZZER_H
 #define BSP_BUZZER_H
 #include "stm32h7xx_hal.h"
+#include <stdint.h>
+
+#define BUZZER_TIMER_CLOCK_HZ 240000000U
+#define BUZZER_A4_FREQUENCY_HZ 440.0f
+
+typedef struct {
+    uint8_t pitch;       /* MIDI pitch; 0 is rest, 69 is A4. */
+    uint16_t duration_ms;
+} MusicNoteV2_t;
+
+void Buzzer_PlayPitch(uint8_t pitch);
+void Buzzer_PlayNotesV2(const MusicNoteV2_t *notes, uint32_t count);
 #define  proport          240000 	//Tclk/(arr+1)=240000000/(1000)
 
 //根据Tout= ((arr+1)*(psc+1))/Tclk推出psc值就是本句define定义的值，Tout为音调频率131Hz的倒数，Tclk=APB1 CLK_INT = 240MHz

@@ -31,3 +31,22 @@ void BSP_PWM_SetDutyPermille(TIM_HandleTypeDef *htim, uint32_t channel,
     }
     BSP_PWM_SetPulse(htim, channel, (uint32_t)pulse);
 }
+
+void BSP_PWM_SetFrequency(TIM_HandleTypeDef *htim, uint32_t timer_clock_hz,
+                          uint32_t frequency_hz)
+{
+    if (frequency_hz == 0U) {
+        return;
+    }
+
+    uint32_t period = __HAL_TIM_GET_AUTORELOAD(htim) + 1U;
+    uint32_t divider = (uint32_t)(((uint64_t)timer_clock_hz +
+                                   (uint64_t)period * frequency_hz / 2U) /
+                                  ((uint64_t)period * frequency_hz));
+    if (divider == 0U || divider > 65536U) {
+        return;
+    }
+    __HAL_TIM_SET_PRESCALER(htim, divider - 1U);
+    __HAL_TIM_SET_COUNTER(htim, 0U);
+    htim->Instance->EGR = TIM_EGR_UG;
+}
