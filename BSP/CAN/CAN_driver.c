@@ -4,18 +4,18 @@
 #include <stddef.h>
 #include <string.h>
 
-#define CAN_TX_QUEUE_LENGTH 16U
-#define CAN_RX_QUEUE_LENGTH 32U
 
 static CanInstance_t *can_instances;
 static uint8_t can_instance_count;
 
+//注册can实例数量和指针
 void CAN_RegisterInstances(CanInstance_t *instances, uint8_t count)
 {
     can_instances = instances;
     can_instance_count = count;
 }
 
+//输入can句柄，返回对应的can实例指针
 static CanInstance_t *CAN_InstanceFor(FDCAN_HandleTypeDef *hcan)
 {
     for (uint8_t i = 0U; i < can_instance_count; ++i) {
@@ -25,13 +25,14 @@ static CanInstance_t *CAN_InstanceFor(FDCAN_HandleTypeDef *hcan)
     }
     return NULL;
 }
-
+//输入can句柄，返回发送队列的句柄
 static QueueHandle_t CANTransmit_QueueFor(FDCAN_HandleTypeDef *hcan)
 {
     CanInstance_t *instance = CAN_InstanceFor(hcan);
     return instance != NULL ? instance->tx_queue : NULL;
 }
 
+//can初始化，包含滤波器初始化，使能can，使能can中断,根据分配的fifo使能对应的rx中断
 void can_bsp_init(void)
 {
     can_filter_init();
@@ -44,7 +45,7 @@ void can_bsp_init(void)
         HAL_FDCAN_ActivateNotification(instance->can, notification, 0U);
     }
 }
-
+//can初始化的子函数，滤波器初始化，掩码模式过滤ID2为零不过滤
 void can_filter_init(void)
 {
     FDCAN_FilterTypeDef filter = {0};
@@ -63,7 +64,7 @@ void can_filter_init(void)
                                      FDCAN_FILTER_REMOTE, FDCAN_FILTER_REMOTE);
     }
 }
-
+//can发送数据函数，返回0表示发送成功，返回1表示发送失败
 uint8_t fdcanx_send_data(FDCAN_HandleTypeDef *hfdcan, uint16_t id,
                          uint8_t *data, uint32_t len)
 {
@@ -90,7 +91,7 @@ uint8_t fdcanx_send_data(FDCAN_HandleTypeDef *hfdcan, uint16_t id,
     }
     return 0U;
 }
-
+//can发送队列初始化函数，创建发送队列
 BaseType_t CANTransmit_QueueInit(void)
 {
     for (uint8_t i = 0U; i < can_instance_count; ++i) {
@@ -98,13 +99,10 @@ BaseType_t CANTransmit_QueueInit(void)
             can_instances[i].tx_queue = xQueueCreate(CAN_TX_QUEUE_LENGTH,
                                                      sizeof(CanTxFrame_t));
         }
-        if (can_instances[i].tx_queue == NULL) {
-            return pdFAIL;
-        }
     }
     return can_instance_count != 0U ? pdPASS : pdFAIL;
 }
-
+//can接收队列初始化函数，创建接收队列
 BaseType_t CANReceive_QueueInit(void)
 {
     for (uint8_t i = 0U; i < can_instance_count; ++i) {
@@ -119,6 +117,7 @@ BaseType_t CANReceive_QueueInit(void)
     return can_instance_count != 0U ? pdPASS : pdFAIL;
 }
 
+//can中断处理函数，主要把数据搬到接收队列
 static void CANReceive_FromIsr(FDCAN_HandleTypeDef *hcan, uint32_t fifo)
 {
     CanInstance_t *instance = CAN_InstanceFor(hcan);
@@ -126,13 +125,13 @@ static void CANReceive_FromIsr(FDCAN_HandleTypeDef *hcan, uint32_t fifo)
     FDCAN_RxHeaderTypeDef header;
     CanRxFrame_t frame;
     uint8_t rx_data[64];
-
+    //一次全部读完fifo不留帧
     while (HAL_FDCAN_GetRxFifoFillLevel(hcan, fifo) != 0U) {
         if (HAL_FDCAN_GetRxMessage(hcan, fifo, &header, rx_data) != HAL_OK) {
             break;
         }
-        if (instance != NULL && instance->rx_queue != NULL &&
-            header.IdType == FDCAN_STANDARD_ID &&
+
+        if (header.IdType == FDCAN_STANDARD_ID &&
             header.RxFrameType == FDCAN_DATA_FRAME &&
             header.DataLength <= FDCAN_DLC_BYTES_8) {
             frame.id = (uint16_t)header.Identifier;
@@ -141,9 +140,10 @@ static void CANReceive_FromIsr(FDCAN_HandleTypeDef *hcan, uint32_t fifo)
             (void)xQueueSendFromISR(instance->rx_queue, &frame, &task_woken);
         }
     }
+    //ISR返回到更高优先级任务如果有
     portYIELD_FROM_ISR(task_woken);
 }
-
+//fifo0,1中断回调函数
 void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hcan, uint32_t flags)
 {
     if ((flags & FDCAN_IT_RX_FIFO0_NEW_MESSAGE) != 0U) {
@@ -158,30 +158,11 @@ void HAL_FDCAN_RxFifo1Callback(FDCAN_HandleTypeDef *hcan, uint32_t flags)
     }
 }
 
-void CANReceive_QueueTask(void *argument)
-{
-    CanInstance_t *instance = CAN_InstanceFor((FDCAN_HandleTypeDef *)argument);
-    if (instance == NULL || instance->rx_queue == NULL) {
-        vTaskDelete(NULL);
-        return;
-    }
-
-    CanRxFrame_t frame;
-    for (;;) {
-        if (xQueueReceive(instance->rx_queue, &frame, portMAX_DELAY) == pdPASS &&
-            instance->on_receive != NULL) {
-            instance->on_receive(instance->can, frame.id, frame.data, frame.length);
-        }
-    }
-}
-
+//发送消息进队
 BaseType_t CANTransmit_Enqueue(FDCAN_HandleTypeDef *hcan, uint16_t std_id,
                                const uint8_t data[8])
 {
     QueueHandle_t queue = CANTransmit_QueueFor(hcan);
-    if (queue == NULL || data == NULL || std_id > 0x7FFU) {
-        return pdFAIL;
-    }
     CanTxFrame_t frame = {.can = hcan, .id = std_id};
     memcpy(frame.data, data, sizeof(frame.data));
     return xQueueSend(queue, &frame, 0U);
@@ -190,10 +171,6 @@ BaseType_t CANTransmit_Enqueue(FDCAN_HandleTypeDef *hcan, uint16_t std_id,
 void CANTransmit_QueueTask(void *argument)
 {
     QueueHandle_t queue = CANTransmit_QueueFor((FDCAN_HandleTypeDef *)argument);
-    if (queue == NULL) {
-        vTaskDelete(NULL);
-        return;
-    }
     CanTxFrame_t frame;
     for (;;) {
         if (xQueueReceive(queue, &frame, portMAX_DELAY) == pdPASS) {

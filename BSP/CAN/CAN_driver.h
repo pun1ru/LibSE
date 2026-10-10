@@ -5,6 +5,9 @@
 #include "FreeRTOS.h"
 #include "queue.h"
 
+#define CAN_TX_QUEUE_LENGTH 16U
+#define CAN_RX_QUEUE_LENGTH 32U
+
 typedef struct {
 	uint32_t tx_ok;          // 发送成功计数
 	uint32_t tx_fail;        // 发送失败计数
@@ -47,7 +50,6 @@ BaseType_t CANReceive_QueueInit(void);
 BaseType_t CANTransmit_Enqueue(FDCAN_HandleTypeDef *hcan, uint16_t std_id,
                                const uint8_t data[8]);
 void CANTransmit_QueueTask(void *argument);
-void CANReceive_QueueTask(void *argument);
 void CANTransmit_U8(FDCAN_HandleTypeDef *hcan, uint32_t std_id, uint8_t aData[]);
 void CANTransmit_I16(FDCAN_HandleTypeDef *hcan, uint32_t std_id, int16_t output1, int16_t output2, int16_t output3, int16_t output4);
 void CANInitialize(FDCAN_HandleTypeDef *hcan);

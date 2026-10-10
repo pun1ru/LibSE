@@ -7,7 +7,7 @@ static uint32_t CYCCNT_LAST;
 uint64_t CYCCNT64;
 
 static void DWT_CNT_Update(void);
-
+//开启DWT计数器
 void DWT_Init(uint32_t CPU_Freq_mHz)
 {
     /* 使能DWT外设 */
@@ -24,7 +24,7 @@ void DWT_Init(uint32_t CPU_Freq_mHz)
     CPU_FREQ_Hz_us = CPU_FREQ_Hz / 1000000;
     CYCCNT_RountCount = 0;
 }
-
+//计算两次调用经过的时间
 float DWT_GetDeltaT(uint32_t *cnt_last)
 {
     volatile uint32_t cnt_now = DWT->CYCCNT;
@@ -35,7 +35,7 @@ float DWT_GetDeltaT(uint32_t *cnt_last)
 
     return dt;
 }
-
+//double类型
 double DWT_GetDeltaT64(uint32_t *cnt_last)
 {
     volatile uint32_t cnt_now = DWT->CYCCNT;
@@ -46,7 +46,7 @@ double DWT_GetDeltaT64(uint32_t *cnt_last)
 
     return dt;
 }
-
+//更新系统时间
 void DWT_SysTimeUpdate(void)
 {
     volatile uint32_t cnt_now = DWT->CYCCNT;
@@ -62,7 +62,7 @@ void DWT_SysTimeUpdate(void)
     CNT_TEMP3 = CNT_TEMP2 - SysTime.ms * CPU_FREQ_Hz_ms;
     SysTime.us = CNT_TEMP3 / CPU_FREQ_Hz_us;
 }
-
+//返回从初始化开始经过的总时间
 float DWT_GetTimeline_s(void)
 {
     DWT_SysTimeUpdate();
@@ -99,7 +99,7 @@ static void DWT_CNT_Update(void)
 
     CYCCNT_LAST = cnt_now;
 }
-
+//忙等
 void DWT_Delay(float Delay)
 {
     uint32_t tickstart = DWT->CYCCNT;

@@ -36,21 +36,28 @@
 
 #include "bsp_dwt.h"
 #include "task_define.h"
+#include "CAN_driver.h"
+void CommunicateInit(void);
 TaskHandle_t MonitorTaskHandle;
+TaskHandle_t RemoteRecTaskHandle;
+TaskHandle_t StateMachineTaskHandle;
+TaskHandle_t DecisionTaskHandle;
 TaskHandle_t ReceiveTaskHandle;
 TaskHandle_t TransmitTaskHandle;
+
+
 
 /*外设及freertos相关初始化所需的其他源文件中的全局变量*/
 void InitTask(void const * argument)
 {
 	taskENTER_CRITICAL();
 	DWT_Init(480);
-	StartupNotice();//奏乐！
 	xTaskCreate(MonitorTask,        "MonitorTask_",      128,  NULL,  4,  &MonitorTaskHandle      );
-	xTaskCreate(RemoteRecTask,      "RemoteRecTask_",    256,  NULL,  7,  &remoteRecTaskHandle    );
-	xTaskCreate(StateMachineTask,   "StateMachineTask_", 2048, NULL,  6,  &stateMachineTaskHandle );	
-	xTaskCreate(DecisionTask, 	    "DecisionTask_", 	 512,  NULL,  5,  &decisionTaskHandle     );
-	PeripheralRecEnable();   	
+	xTaskCreate(RemoteRecTask,      "RemoteRecTask_",    256,  NULL,  7,  &RemoteRecTaskHandle    );
+	xTaskCreate(StateMachineTask,   "StateMachineTask_", 2048, NULL,  6,  &StateMachineTaskHandle );	
+	xTaskCreate(DecisionTask, 	    "DecisionTask_", 	 512,  NULL,  5,  &DecisionTaskHandle     );
+	xTaskCreate(ReceiveTask, 		"ReceiveTask_", 	 512,  NULL,  8,  &ReceiveTaskHandle );
+	xTaskCreate(TransmitTask, 		"TransmitTask_", 	 512,  NULL,  9,  &TransmitTaskHandle );
 	vTaskDelete(NULL);   
 	taskEXIT_CRITICAL();   
 }
