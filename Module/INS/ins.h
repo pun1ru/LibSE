@@ -10,6 +10,9 @@ typedef struct {
     float accel[3];
     float temperature;
     uint8_t ready;
+    uint8_t init_status;
+    uint32_t update_count;
+    float last_dt_s;
 } INS_t;
 
 void INS_Init(INS_t *ins, float beta);

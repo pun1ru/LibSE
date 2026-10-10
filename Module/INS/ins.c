@@ -1,18 +1,24 @@
 #include "ins.h"
 #include "bmi088_driver.h"
 
+#include <stddef.h>
 #include <string.h>
 
 void INS_Init(INS_t *ins, float beta)
 {
+    if (ins == NULL) {
+        return;
+    }
+
     memset(ins, 0, sizeof(*ins));
     MadgwickAHRS_Init(&ins->attitude, beta);
-    ins->ready = BMI088_init() == BMI088_NO_ERROR;
+    ins->init_status = BMI088_init();
+    ins->ready = (ins->init_status == BMI088_NO_ERROR) ? 1U : 0U;
 }
 
 void INS_Update(INS_t *ins, float dt)
 {
-    if (ins->ready == 0U || dt <= 0.0f) {
+    if (ins == NULL || ins->ready == 0U || dt <= 0.0f) {
         return;
     }
 
@@ -28,4 +34,6 @@ void INS_Update(INS_t *ins, float dt)
     MadgwickAHRS_Update(&ins->attitude, ins->gyro[0], ins->gyro[1],
                         ins->gyro[2], ins->accel[0], ins->accel[1],
                         ins->accel[2], dt);
+    ins->last_dt_s = dt;
+    ++ins->update_count;
 }

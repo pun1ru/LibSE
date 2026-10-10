@@ -2,14 +2,12 @@
 #include "bsp_dwt.h"
 #include "adrc.h"
 #include "algorism.h"
-#include "gimbalControl.h"
 
 /**
   * @brief  fhan最速综合函数
   * @note 根据输入信号的大小和变化率自适应地调整输出信号的幅值和频率，使得输出信号能够最快地跟踪输入信号，同时抑制噪声和干扰的影响
   *
   */
-extern GimbalControl gimbalControl;
 static float fhan(float x1, float x2, float r, float h)
 {
 	float d, a0, y, a1, a2, sy, a, sa;	
@@ -438,7 +436,10 @@ void LTDADRCUpdate(ADRC* adrc,LTD* ltd, float target, float feedback)
 	//calculate control value without disturbance compensation//强行改一下哎试试gimbalControl.GimbalEstimate.pitch_angular_velocity_dps
 	//居然挺有用的z2换成真是角速度
 //	adrc->u_0 = LESFUpdate(&adrc->esf, AngleLimit(ltd->x1 - adrc->eso.z1, adrc->limit_min, adrc->limit_max), ltd->x2 - adrc->eso.z2);
-	adrc->u_0 = LESFUpdate(&adrc->esf, AngleLimit(ltd->x1 - adrc->eso.z1, adrc->limit_min, adrc->limit_max), ltd->x2 - gimbalControl.GimbalEstimate.pitch_angular_velocity_dps)+ltd->x2*0;//加速度前馈试试
+	adrc->u_0 = LESFUpdate(&adrc->esf,
+	                       AngleLimit(ltd->x1 - adrc->eso.z1,
+                                  adrc->limit_min, adrc->limit_max),
+	                       ltd->x2 - adrc->eso.z2);
 	//estimate disturbance compensation //更新一阶e1,二阶e2,计算应该给出的控制量
 	if(adrc->eso.b == 0)
 		adrc->u = adrc->u_0;

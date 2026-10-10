@@ -17,12 +17,27 @@ void Referee_Init(Referee_t *referee, UART_HandleTypeDef *huart)
     BSP_UART_StartReceive(&referee->uart);
 }
 
+void Referee_Reset(Referee_t *referee)
+{
+    if (referee == NULL) {
+        return;
+    }
+
+    referee->frame_size = 0U;
+}
+
 void Referee_Input(Referee_t *referee, const uint8_t *data, uint16_t size)
 {
     for (uint16_t i = 0U; i < size; ++i) {
         uint8_t byte = data[i];
         if (referee->frame_size == 0U && byte != 0xA5U) {
             continue;
+        }
+        if (referee->frame_size >= REFEREE_BUFFER_SIZE) {
+            referee->frame_size = 0U;
+            if (byte != 0xA5U) {
+                continue;
+            }
         }
         referee->frame_buffer[referee->frame_size++] = byte;
         if (referee->frame_size < 5U) {
