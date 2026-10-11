@@ -4,11 +4,10 @@
 #include "task_define.h"
 #include "task.h"
 #include "monitor.h"
+#include "task_system.h"
 
 #define INS_MADGWICK_BETA 0.05f
 #define INS_RETRY_PERIOD_MS 1000U
-
-INS_t board_ins;
 
 void INS_Task(void *argument)
 {
@@ -21,15 +20,6 @@ void INS_Task(void *argument)
     while(1) {
         if (board_ins.ready == 0U) {
             INS_Init(&board_ins, INS_MADGWICK_BETA);
-            if (board_ins.ready == 0U) {
-                Monitor_TaskError(MONITOR_TASK_INS);
-                Monitor_SetReady(MONITOR_TASK_INS, 0U);
-                vTaskDelay(pdMS_TO_TICKS(INS_RETRY_PERIOD_MS));
-                last_wake = xTaskGetTickCount();
-                continue;
-            }
-
-            Monitor_SetReady(MONITOR_TASK_INS, 1U);
             last_wake = xTaskGetTickCount();
             last_cycle = DWT->CYCCNT;
         }

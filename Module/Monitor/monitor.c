@@ -1,9 +1,13 @@
 #include "monitor.h"
 
+#include "FreeRTOS.h"
+#include "task.h"
+
 #include <stddef.h>
 #include <string.h>
 
 static MonitorStatus_t monitor_status;
+static uint32_t heartbeat[MONITOR_TASK_COUNT];
 static uint32_t previous_heartbeat[MONITOR_TASK_COUNT];
 
 static uint8_t Monitor_TaskIdValid(MonitorTaskId_t task)
@@ -14,6 +18,7 @@ static uint8_t Monitor_TaskIdValid(MonitorTaskId_t task)
 void Monitor_Init(void)
 {
     memset(&monitor_status, 0, sizeof(monitor_status));
+    memset(heartbeat, 0, sizeof(heartbeat));
     memset(previous_heartbeat, 0, sizeof(previous_heartbeat));
 }
 
@@ -23,8 +28,9 @@ void Monitor_TaskBeat(MonitorTaskId_t task)
         return;
     }
 
-    ++monitor_status.task[task].heartbeat;
-    monitor_status.task[task].ready = 1U;
+    taskENTER_CRITICAL();
+    ++heartbeat[task];
+    taskEXIT_CRITICAL();
 }
 
 void Monitor_TaskError(MonitorTaskId_t task)
@@ -33,44 +39,28 @@ void Monitor_TaskError(MonitorTaskId_t task)
         return;
     }
 
+    taskENTER_CRITICAL();
     ++monitor_status.task[task].error_count;
-}
-
-void Monitor_SetReady(MonitorTaskId_t task, uint8_t ready)
-{
-    if (Monitor_TaskIdValid(task) == 0U) {
-        return;
-    }
-
-    monitor_status.task[task].ready = (ready != 0U) ? 1U : 0U;
-    if (ready == 0U) {
-        monitor_status.task[task].online = 0U;
-    }
+    taskEXIT_CRITICAL();
 }
 
 void Monitor_Sample(void)
 {
     uint8_t task_index;
 
-    ++monitor_status.sample_count;
+    taskENTER_CRITICAL();
     for (task_index = 0U; task_index < MONITOR_TASK_COUNT; ++task_index) {
         MonitorTaskStatus_t *task = &monitor_status.task[task_index];
 
-        if (task->heartbeat != previous_heartbeat[task_index]) {
-            previous_heartbeat[task_index] = task->heartbeat;
-            task->missed_samples = 0U;
-            task->online = task->ready;
-        } else if (task->missed_samples < UINT32_MAX) {
-            ++task->missed_samples;
-            if (task->missed_samples >= MONITOR_OFFLINE_SAMPLE_LIMIT) {
-                task->online = 0U;
-            }
-        }
-
-        if (task->ready == 0U) {
+        if (heartbeat[task_index] == previous_heartbeat[task_index]) {
             task->online = 0U;
+            ++task->error_count;
+        } else {
+            previous_heartbeat[task_index] = heartbeat[task_index];
+            task->online = 1U;
         }
     }
+    taskEXIT_CRITICAL();
 }
 
 void Monitor_GetSnapshot(MonitorStatus_t *status)
@@ -79,5 +69,7 @@ void Monitor_GetSnapshot(MonitorStatus_t *status)
         return;
     }
 
+    taskENTER_CRITICAL();
     memcpy(status, &monitor_status, sizeof(*status));
+    taskEXIT_CRITICAL();
 }

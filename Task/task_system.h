@@ -6,6 +6,7 @@
 #include "referee.h"
 #include "remote_control.h"
 #include "task.h"
+#include "ins.h"
 
 #define TASK_CAN_INSTANCE_COUNT       3U
 #define TASK_UART_INSTANCE_COUNT      6U
@@ -44,5 +45,8 @@ extern TaskHandle_t MonitorTaskHandle;
 extern TaskHandle_t ReceiveTaskHandle;
 extern TaskHandle_t TransmitTaskHandle;
 extern TaskHandle_t INSTaskHandle;
+
+extern INS_t board_ins;
+
 
 #endif
