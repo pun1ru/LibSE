@@ -17,7 +17,7 @@ static uint8_t Monitor_TaskIdValid(MonitorTaskId_t task)
 
 void Monitor_Init(void)
 {
-    memset(&monitor_status, 0, sizeof(monitor_status));
+    memset(&monitor_status, 0, sizeof(monitor_status))  ;
     memset(heartbeat, 0, sizeof(heartbeat));
     memset(previous_heartbeat, 0, sizeof(previous_heartbeat));
 }

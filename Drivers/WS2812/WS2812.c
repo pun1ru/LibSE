@@ -28,7 +28,7 @@
  * @copyright Copyright (c) 2025
  */
 
-#include "ws2812.h"
+#include "WS2812.h"
 #include "tim.h"                  // htim2 声明
 #include "stm32h7xx_hal_dma.h"   // DMA_REQUEST_TIM2_CH1
 
@@ -90,6 +90,20 @@ static uint32_t ccr_dma_buf[WS2812_TOTAL_BITS];
 /** @brief 初始化完成标志 */
 static uint8_t pwm_ready = 0;
 
+typedef struct
+{
+    uint8_t active;
+    uint8_t r;
+    uint8_t g;
+    uint8_t b;
+    uint8_t last_level;
+    uint32_t period_ms;
+    uint32_t start_tick;
+} WS2812_BreatheState_t;
+
+static WS2812_BreatheState_t breathe_state;
+static SPI_HandleTypeDef *ws2812_spi;
+
 /*---------------------------------------------------------------------------SPI 板载单灯（保持兼容）-----------------------------------------------------*/
 
 /** @brief SPI 0-码脉冲编码 */
@@ -104,13 +118,23 @@ static uint8_t pwm_ready = 0;
 void WS2812_SPI_Ctrl(uint8_t r, uint8_t g, uint8_t b)
 {
     uint8_t txbuf[24];
+
+    if (ws2812_spi == NULL) {
+        return;
+    }
+
     for (int i = 0; i < 8; i++)
     {
         txbuf[7 - i]  = (((g >> i) & 0x01) ? WS2812_HighLevel : WS2812_LowLevel) >> 1;
         txbuf[15 - i] = (((r >> i) & 0x01) ? WS2812_HighLevel : WS2812_LowLevel) >> 1;
         txbuf[23 - i] = (((b >> i) & 0x01) ? WS2812_HighLevel : WS2812_LowLevel) >> 1;
     }
-    HAL_SPI_Transmit(&WS2812_SPI_UNIT, txbuf, 24, 0xFFFF);
+    HAL_SPI_Transmit(ws2812_spi, txbuf, 24, 0xFFFF);
+}
+
+void WS2812_SPI_Init(SPI_HandleTypeDef *hspi)
+{
+    ws2812_spi = hspi;
 }
 
 /*---------------------------------------------------------------------------内部辅助函数------------------------------------------------------------------*/
@@ -292,4 +316,64 @@ void WS2812_Send(void)
 
     /* 不等待！DMA 硬件在后台自动搬运 338 个 CCR 值，
        420µs 后灯带自动锁存，下次调用再做清理。 */
+}
+
+void WS2812_Breathe_Start(uint8_t r, uint8_t g, uint8_t b,
+                          uint32_t period_ms)
+{
+    if (period_ms < 2U) {
+        period_ms = 2U;
+    }
+
+    breathe_state.active = 1U;
+    breathe_state.r = r;
+    breathe_state.g = g;
+    breathe_state.b = b;
+    breathe_state.last_level = 0xFFU;
+    breathe_state.period_ms = period_ms;
+    breathe_state.start_tick = HAL_GetTick();
+    WS2812_Breathe_Update();
+}
+
+void WS2812_Breathe_Stop(void)
+{
+    breathe_state.active = 0U;
+    breathe_state.last_level = 0U;
+    WS2812_SPI_Ctrl(0U, 0U, 0U);
+}
+
+void WS2812_Breathe_Update(void)
+{
+    uint32_t elapsed;
+    uint32_t phase;
+    uint32_t half_period;
+    uint8_t level;
+
+    if (breathe_state.active == 0U) {
+        return;
+    }
+
+    elapsed = HAL_GetTick() - breathe_state.start_tick;
+    phase = elapsed % breathe_state.period_ms;
+    half_period = breathe_state.period_ms / 2U;
+    if (half_period == 0U) {
+        half_period = 1U;
+    }
+
+    if (phase < half_period) {
+        level = (uint8_t)((phase * 255U) / half_period);
+    } else {
+        level = (uint8_t)(((breathe_state.period_ms - phase) * 255U) /
+                          (breathe_state.period_ms - half_period));
+    }
+
+    if (level == breathe_state.last_level) {
+        return;
+    }
+
+    breathe_state.last_level = level;
+    WS2812_SPI_Ctrl(
+        (uint8_t)(((uint16_t)breathe_state.r * level + 127U) / 255U),
+        (uint8_t)(((uint16_t)breathe_state.g * level + 127U) / 255U),
+        (uint8_t)(((uint16_t)breathe_state.b * level + 127U) / 255U));
 }

@@ -10,6 +10,8 @@
 #include "task_receive.h"
 #include "task_system.h"
 #include "task_transmit.h"
+#include "../../Drivers/WS2812/WS2812.h"
+#include "spi.h"
 #include "usart.h"
 #include "bsp_buzzer.h"
 #include "main.h"
@@ -98,6 +100,7 @@ void InitTask(void *argument)
     DWT_Init(TASK_CPU_FREQUENCY_MHZ);
     Monitor_Init();
     CommunicateInit();
+    WS2812_SPI_Init(&hspi6);
     Buzzer_BeepOnce();
     xTaskCreate(MonitorTask, "MonitorTask", TASK_MONITOR_STACK_SIZE, NULL,
                 TASK_MONITOR_PRIORITY, &MonitorTaskHandle);

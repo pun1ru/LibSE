@@ -16,11 +16,9 @@
 #define __WS2812_H__
 
 #include "main.h"
-#include "general_define.h"
 
-/*---------------------------------------------------------------------------SPI 板载单灯（PA07, SPI6）-----------------------------------------------------*/
-#define WS2812_SPI_UNIT BOARD_LED_SPI
-extern SPI_HandleTypeDef WS2812_SPI_UNIT;
+/*---------------------------------------------------------------------------SPI 板载单灯-----------------------------------------------------*/
+void WS2812_SPI_Init(SPI_HandleTypeDef *hspi);
 
 void WS2812_SPI_Ctrl(uint8_t r, uint8_t g, uint8_t b);
 
@@ -46,5 +44,18 @@ void WS2812_SetAll(uint8_t r, uint8_t g, uint8_t b);
 
 /** @brief 将缓冲区数据通过 DMA+PWM 发送到灯带（非阻塞，立即返回） */
 void WS2812_Send(void);
+
+/** @brief 启动板载单颗 WS2812 的非阻塞呼吸灯效果
+ *  @param r/g/b 呼吸灯的基础颜色
+ *  @param period_ms 完整呼吸周期，包含渐亮和渐灭
+ */
+void WS2812_Breathe_Start(uint8_t r, uint8_t g, uint8_t b,
+                          uint32_t period_ms);
+
+/** @brief 停止板载呼吸灯并关闭板载单灯 */
+void WS2812_Breathe_Stop(void);
+
+/** @brief 更新呼吸灯状态，应由周期任务定期调用 */
+void WS2812_Breathe_Update(void);
 
 #endif

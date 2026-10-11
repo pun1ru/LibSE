@@ -9,9 +9,11 @@ EventGroupHandle_t UartEventGroup;
 
 Referee_t referee_receiver;
 RC_Remote_t rc_receiver;
-INS_t board_ins;
 
 TaskHandle_t MonitorTaskHandle;
 TaskHandle_t ReceiveTaskHandle;
 TaskHandle_t TransmitTaskHandle;
 TaskHandle_t INSTaskHandle;
+
+INS_t board_ins;
+

@@ -7,15 +7,18 @@
 #include "task_define.h"
 #include "task_system.h"
 
+#include "CAN_driver.h"
+#include "fdcan.h"
+#include "FreeRTOS.h"
+#include "task.h"
+
+
+
 void TransmitTask(void *argument)
 {
     CanTxFrame_t frame;
 
     (void)argument;
-    if (transmit_can_queues == NULL) {
-        vTaskDelete(NULL);
-        return;
-    }
 
     while(1) {
         QueueSetMemberHandle_t ready = xQueueSelectFromSet(
