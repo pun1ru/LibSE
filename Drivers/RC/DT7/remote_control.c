@@ -5,8 +5,6 @@
 
 #include <string.h>
 
-RC_Remote_t rc_remote;
-
 static uint16_t RC_Remote_Channel(const uint8_t *frame, uint8_t channel)
 {
     switch (channel) {
@@ -80,7 +78,7 @@ static void RC_Remote_Decode(RC_Remote_t *remote,
     taskEXIT_CRITICAL();
 }
 
-void RC_Remote_Init(RC_Remote_t *remote)
+void RC_Init(RC_Remote_t *remote)
 {
     if (remote == NULL) {
         return;

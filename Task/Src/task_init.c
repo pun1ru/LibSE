@@ -18,13 +18,13 @@
 
 #include <string.h>
 
-static void UARTRegister(BSP_UART_t *uart, UART_HandleTypeDef *huart,
+static void UARTRegister(UartInstance_t *uart, UART_HandleTypeDef *huart,
                          EventBits_t rx_bit, EventBits_t error_bit)
 {
     memset(uart, 0, sizeof(*uart));
     uart->huart = huart;
-    BSP_UART_Register(uart);
-    BSP_UART_SetEventGroup(uart, UartEventGroup, rx_bit, error_bit);
+    UART_Register(uart);
+    UART_SetEventGroup(uart, UartEventGroup, rx_bit, error_bit);
 }
 void CANInit(void)
 {
@@ -54,23 +54,20 @@ void CANInit(void)
 static void UARTInit(void)
 {
     UartEventGroup = xEventGroupCreate();
-    if (UartEventGroup == NULL) {
-        Error_Handler();
-        return;
-    }
-    BSP_UART_EventGroup = UartEventGroup;
 
-    UARTRegister(&uart5_instance, &huart5,
+    UART_EventGroup = UartEventGroup;
+
+    UARTRegister(&uart_instances[TASK_UART_HUART5_INDEX], &huart5,
                  TASK_UART_EVENT_HUART5_RX, TASK_UART_EVENT_HUART5_ERROR);
-    UARTRegister(&uart7_instance, &huart7,
+    UARTRegister(&uart_instances[TASK_UART_HUART7_INDEX], &huart7,
                  TASK_UART_EVENT_HUART7_RX, TASK_UART_EVENT_HUART7_ERROR);
-    UARTRegister(&uart1_instance, &huart1,
+    UARTRegister(&uart_instances[TASK_UART_HUART1_INDEX], &huart1,
                  TASK_UART_EVENT_HUART1_RX, TASK_UART_EVENT_HUART1_ERROR);
-    UARTRegister(&uart2_instance, &huart2,
+    UARTRegister(&uart_instances[TASK_UART_HUART2_INDEX], &huart2,
                  TASK_UART_EVENT_HUART2_RX, TASK_UART_EVENT_HUART2_ERROR);
-    UARTRegister(&uart3_instance, &huart3,
+    UARTRegister(&uart_instances[TASK_UART_HUART3_INDEX], &huart3,
                  TASK_UART_EVENT_HUART3_RX, TASK_UART_EVENT_HUART3_ERROR);
-    UARTRegister(&uart10_instance, &huart10,
+    UARTRegister(&uart_instances[TASK_UART_HUART10_INDEX], &huart10,
                  TASK_UART_EVENT_HUART10_RX, TASK_UART_EVENT_HUART10_ERROR);
 }
 

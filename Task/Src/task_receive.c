@@ -12,22 +12,44 @@
 #include <stddef.h>
 #include <string.h>
 
-#define TASK_UART_INSTANCE_COUNT 6U
-#define TASK_UART_PACKET_SIZE BSP_UART_DMA_BUFFER_SIZE
+#define TASK_UART_PACKET_SIZE UART_DMA_BUFFER_SIZE
 
-static BSP_UART_t *const task_uart_instances[TASK_UART_INSTANCE_COUNT] = {
-    &uart5_instance,
-    &uart7_instance,
-    &uart1_instance,
-    &uart2_instance,
-    &uart3_instance,
-    &uart10_instance
-};
+/*--------------------------------------回调函数定义--------------------------------------*/
+static void TaskReceive_RCInput(const uint8_t *data, uint16_t size)
+{
+    RC_Remote_Input(&rc_receiver, data, size);
+}
 
+static void TaskReceive_RCError(void)
+{
+    RC_Remote_OnError(&rc_receiver);
+}
+
+static void TaskReceive_RefereeInput(const uint8_t *data, uint16_t size)
+{
+    Referee_Input(&referee_receiver, data, size);
+}
+
+static void TaskReceive_RefereeError(void)
+{
+    Referee_Reset(&referee_receiver);
+}
+/*--------------------------------------初始化协议--------------------------------------*/
 static void TaskReceive_InitProtocols(void)
 {
-    memset(&referee_receiver, 0, sizeof(referee_receiver));
-    RC_Remote_Init(&rc_remote);
+    //初始化
+    Referee_Init(&referee_receiver);
+    RC_Init(&rc_receiver);
+    //定义函数指针映射到对应的回调函数
+    //UART回调
+    uart_instances[TASK_UART_HUART5_INDEX].on_packet =
+        TaskReceive_RCInput;
+    uart_instances[TASK_UART_HUART5_INDEX].on_error =
+        TaskReceive_RCError;
+    uart_instances[TASK_UART_HUART1_INDEX].on_packet =
+        TaskReceive_RefereeInput;
+    uart_instances[TASK_UART_HUART1_INDEX].on_error =
+        TaskReceive_RefereeError;
 }
 
 void TaskReceive_CANCallback(FDCAN_HandleTypeDef *can, uint16_t id,
@@ -39,67 +61,99 @@ void TaskReceive_CANCallback(FDCAN_HandleTypeDef *can, uint16_t id,
     (void)length;
 }
 
+/*--------------------------------------默认回调函数--------------------------------------*/
 void CANReceive_Callback(FDCAN_HandleTypeDef *can, uint16_t id,
                          const uint8_t *data, uint8_t length)
 {
-    TaskReceive_CANCallback(can, id, data, length);
+    (void)can;
+    (void)id;
+    (void)data;
+    (void)length;
 }
 
-void UARTReceive_Callback(BSP_UART_t *uart, const uint8_t *data,
+
+void UARTReceive_Callback(UartInstance_t *uart, const uint8_t *data,
                           uint16_t length)
 {
     (void)uart;
     (void)data;
     (void)length;
 }
+/*----------------------------------------------------------------------------*/
+static void TaskReceive_StartCan(void)
+{
+    receive_can_queues = xQueueCreateSet(
+        (UBaseType_t)TASK_CAN_INSTANCE_COUNT *
+        (UBaseType_t)CAN_RX_QUEUE_LENGTH);
+
+    for (uint8_t i = 0U; i < TASK_CAN_INSTANCE_COUNT; ++i) {
+        xQueueAddToSet(can_instances[i].rx_queue, receive_can_queues);
+        }
+    
+}
 
 static void TaskReceive_StartUart(void)
 {
     for (uint8_t i = 0U; i < TASK_UART_INSTANCE_COUNT; ++i) {
-        BSP_UART_t *uart = task_uart_instances[i];
-
-        (void)BSP_UART_SetNotifyTask(uart, xTaskGetCurrentTaskHandle());
-        if (BSP_UART_StartReceiveEx(uart) != HAL_OK) {
-            Monitor_TaskError(MONITOR_TASK_RECEIVE);
-        }
+        UartInstance_t *uart = &uart_instances[i];
+        (void)UART_SetNotifyTask(uart, xTaskGetCurrentTaskHandle());
     }
 }
 
-static void TaskReceive_ProcessUart(BSP_UART_t *uart)
+
+static void TaskReceive_ProcessUartInstance(UartInstance_t *uart)
 {
     uint8_t packet[TASK_UART_PACKET_SIZE];
     uint16_t packet_size;
 
-    while (BSP_UART_RxPop(uart, packet, sizeof(packet), &packet_size) == pdTRUE) {
-        if (uart == &uart5_instance) {
-            RC_Remote_Input(&rc_remote, packet, packet_size);
-        } else if (uart == &uart1_instance) {
-            Referee_Input(&referee_receiver, packet, packet_size);
+    while (UART_RxPop(uart, packet, sizeof(packet), &packet_size) == pdTRUE) {
+        if (uart->on_packet != NULL) {
+            uart->on_packet(packet, packet_size);
         } else {
             UARTReceive_Callback(uart, packet, packet_size);
         }
     }
 }
 
-static void TaskReceive_ProcessCan(QueueSetHandle_t queues,
-                                   CanInstance_t *instances,
-                                   uint8_t instance_count)
+static void TaskReceive_ProcessUart(UartInstance_t *instances,
+                                    uint8_t instance_count)
+{
+    for (uint8_t i = 0U; i < instance_count; ++i) {
+        UartInstance_t *uart = &instances[i];
+        EventBits_t events = UART_GetEvents(uart, pdTRUE);
+
+        if ((events & UART_EVENT_RX_READY) != 0U ||
+            UART_RxAvailable(uart) != 0U) {
+            TaskReceive_ProcessUartInstance(uart);
+        }
+        if ((events & (UART_EVENT_RX_ERROR |
+                      UART_EVENT_RX_OVERFLOW)) != 0U) {
+            if (uart->on_error != NULL) {
+                uart->on_error();
+            }
+            Monitor_TaskError(MONITOR_TASK_RECEIVE);
+        }
+    }
+}
+/*--------------------------------------CAN数据处理--------------------------------------*/
+static void TaskReceive_ProcessCan(QueueSetHandle_t queues)
 {
     CanRxFrame_t frame;
     QueueSetMemberHandle_t ready;
-
+    //xQueueSelectFromSet返回队列集中有数据的队列句柄/null
     while ((ready = xQueueSelectFromSet(queues, 0U)) != NULL) {
         if (xQueueReceive(ready, &frame, 0U) != pdPASS) {
             continue;
         }
-
-        for (uint8_t i = 0U; i < instance_count; ++i) {
-            if (ready == instances[i].rx_queue) {
-                if (instances[i].on_receive != NULL) {
-                    instances[i].on_receive(instances[i].can, frame.id,
-                                            frame.data, frame.length);
+        //查找对应的队列调用对应的回调函数
+        for (uint8_t i = 0U; i < TASK_CAN_INSTANCE_COUNT; ++i) {
+            if (ready == can_instances[i].rx_queue) {
+                //定义每个接收队列自己的回调函数,不然就是默认
+                if (can_instances[i].on_receive != NULL) {
+                    can_instances[i].on_receive(can_instances[i].can, frame.id,
+                                                frame.data, frame.length);
                 } else {
-                    CANReceive_Callback(instances[i].can, frame.id,
+                    CANReceive_Callback(can_instances[i].can, frame.id,
                                         frame.data, frame.length);
                 }
                 break;
@@ -107,64 +161,29 @@ static void TaskReceive_ProcessCan(QueueSetHandle_t queues,
         }
     }
 }
-
+/*--------------------------------------接收任务主体--------------------------------------*/
 void ReceiveTask(void *argument)
 {
-    uint8_t instance_count = 0U;
-    CanInstance_t *instances = CAN_GetInstances(&instance_count);
-    QueueSetHandle_t queues;
     uint32_t notification_value;
 
     (void)argument;
-    if (instances == NULL || instance_count == 0U) {
-        vTaskDelete(NULL);
-        return;
-    }
-
-    queues = xQueueCreateSet((UBaseType_t)instance_count *
-                            (UBaseType_t)CAN_RX_QUEUE_LENGTH);
-    if (queues == NULL) {
-        vTaskDelete(NULL);
-        return;
-    }
-
-    for (uint8_t i = 0U; i < instance_count; ++i) {
-        if (instances[i].rx_queue == NULL ||
-            xQueueAddToSet(instances[i].rx_queue, queues) != pdPASS) {
-            vQueueDelete(queues);
-            vTaskDelete(NULL);
-            return;
-        }
-    }
 
     TaskReceive_InitProtocols();
+    TaskReceive_StartCan();
     TaskReceive_StartUart();
 
-    for (;;) {
-        TaskReceive_ProcessCan(queues, instances, instance_count);
 
-        for (uint8_t i = 0U; i < TASK_UART_INSTANCE_COUNT; ++i) {
-            BSP_UART_t *uart = task_uart_instances[i];
-            EventBits_t events = BSP_UART_GetEvents(uart, pdTRUE);
+    while(1) {
+        //CAN/UART处理函数,调用回调函数
+        
+        TaskReceive_ProcessCan(receive_can_queues);
 
-            if ((events & BSP_UART_EVENT_RX_READY) != 0U ||
-                BSP_UART_RxAvailable(uart) != 0U) {
-                TaskReceive_ProcessUart(uart);
-            }
-            if ((events & (BSP_UART_EVENT_RX_ERROR |
-                          BSP_UART_EVENT_RX_OVERFLOW)) != 0U) {
-                if (uart == &uart5_instance) {
-                    RC_Remote_OnError(&rc_remote);
-                } else if (uart == &uart1_instance) {
-                    Referee_Reset(&referee_receiver);
-                }
-                Monitor_TaskError(MONITOR_TASK_RECEIVE);
-            }
-        }
+        TaskReceive_ProcessUart(uart_instances,
+                                TASK_UART_INSTANCE_COUNT);
 
         Monitor_TaskBeat(MONITOR_TASK_RECEIVE);
         notification_value = 0U;
-        (void)xTaskNotifyWait(0U, (uint32_t)BSP_UART_EVENT_ALL,
+        (void)xTaskNotifyWait(0U, (uint32_t)UART_EVENT_ALL,
                               &notification_value,
                               pdMS_TO_TICKS(TASK_RECEIVE_PERIOD_MS));
     }

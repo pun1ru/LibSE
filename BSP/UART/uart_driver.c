@@ -1,36 +1,78 @@
-#include "bsp_uart.h"
+#include "uart_driver.h"
 
 #include <stddef.h>
 #include <string.h>
 
-/* DMA buffers live in a dedicated section so the linker can place them in a
-   DMA-visible RAM region.  The section name is kept compatible with the
-   previous BSP implementation. */
-static uint8_t uart_rx_dma[BSP_UART_MAX_INSTANCES][2][BSP_UART_DMA_BUFFER_SIZE]
+void UartMonitor_Reset(UartMonitor_t *monitor)
+{
+    monitor->last_rx_size = 0U;
+    monitor->last_rx_event = 0U;
+    monitor->rx_event_count = 0U;
+    monitor->rx_error_count = 0U;
+    monitor->rx_overflow_count = 0U;
+    monitor->tx_error_count = 0U;
+}
+
+void UartMonitor_RecordRx(UartMonitor_t *monitor, uint16_t size,
+                          uint8_t event)
+{
+    monitor->last_rx_size = size;
+    monitor->last_rx_event = event;
+    monitor->rx_event_count++;
+}
+
+void UartMonitor_RecordRxError(UartMonitor_t *monitor)
+{
+    if (monitor != NULL) {
+        monitor->rx_error_count++;
+    }
+}
+
+void UartMonitor_RecordRxOverflow(UartMonitor_t *monitor)
+{
+    if (monitor != NULL) {
+        monitor->rx_overflow_count++;
+    }
+}
+
+void UartMonitor_RecordTxError(UartMonitor_t *monitor)
+{
+    if (monitor != NULL) {
+        monitor->tx_error_count++;
+    }
+}
+
+uint16_t UartMonitor_GetLastRxSize(const UartMonitor_t *monitor)
+{
+    return (monitor != NULL) ? monitor->last_rx_size : 0U;
+}
+
+uint8_t UartMonitor_GetLastRxEvent(const UartMonitor_t *monitor)
+{
+    return (monitor != NULL) ? monitor->last_rx_event : 0U;
+}
+
+static uint8_t uart_rx_dma[UART_MAX_INSTANCES][2][UART_DMA_BUFFER_SIZE]
     __attribute__((section(".bss.bsp_uart_dma"), aligned(32)));
-static uint8_t uart_rx_packets[BSP_UART_MAX_INSTANCES][BSP_UART_RX_SLOT_COUNT]
-                             [BSP_UART_DMA_BUFFER_SIZE]
+static uint8_t uart_rx_packets[UART_MAX_INSTANCES][UART_RX_SLOT_COUNT]
+                             [UART_DMA_BUFFER_SIZE]
     __attribute__((section(".bss.bsp_uart_dma"), aligned(32)));
-static uint16_t uart_rx_packet_size[BSP_UART_MAX_INSTANCES]
-                                    [BSP_UART_RX_SLOT_COUNT];
-static uint8_t uart_tx_dma[BSP_UART_MAX_INSTANCES][BSP_UART_TX_BUFFER_SIZE]
+static uint16_t uart_rx_packet_size[UART_MAX_INSTANCES]
+                                    [UART_RX_SLOT_COUNT];
+static uint8_t uart_tx_dma[UART_MAX_INSTANCES][UART_TX_BUFFER_SIZE]
     __attribute__((section(".bss.bsp_uart_dma"), aligned(32)));
 
-static BSP_UART_t *uart_instances[BSP_UART_MAX_INSTANCES];
+static UartInstance_t *uart_instances[UART_MAX_INSTANCES];
 static uint8_t uart_instance_count;
 
 /* A shared event group follows the pattern used by serialleg2027.  A task can
    either wait on this group (when the FreeRTOS timer/deferred-call feature is
-   enabled) or use BSP_UART_WaitEvents(), which also supports task notices. */
-EventGroupHandle_t BSP_UART_EventGroup;
+   enabled) or use UART_WaitEvents(), which also supports task notices. */
+EventGroupHandle_t UART_EventGroup;
 
-static BSP_UART_t *BSP_UART_Find(UART_HandleTypeDef *huart)
+static UartInstance_t *UART_Find(UART_HandleTypeDef *huart)
 {
     uint8_t i;
-
-    if (huart == NULL) {
-        return NULL;
-    }
 
     for (i = 0U; i < uart_instance_count; ++i) {
         if (uart_instances[i] != NULL && uart_instances[i]->huart == huart) {
@@ -40,25 +82,21 @@ static BSP_UART_t *BSP_UART_Find(UART_HandleTypeDef *huart)
     return NULL;
 }
 
-static uint8_t BSP_UART_InISR(void)
+static uint8_t UART_InISR(void)
 {
     return (__get_IPSR() != 0U) ? 1U : 0U;
 }
 
-static EventBits_t BSP_UART_EventGroupBits(const BSP_UART_t *uart,
+static EventBits_t UART_EventGroupBits(const UartInstance_t *uart,
                                            EventBits_t bits)
 {
     EventBits_t mapped = bits;
 
-    if (uart == NULL) {
-        return bits;
-    }
-
-    if ((bits & BSP_UART_EVENT_RX_READY) != 0U && uart->rx_event_bit != 0U) {
+    if ((bits & UART_EVENT_RX_READY) != 0U && uart->rx_event_bit != 0U) {
         mapped |= uart->rx_event_bit;
     }
-    if ((bits & (BSP_UART_EVENT_RX_OVERFLOW | BSP_UART_EVENT_RX_ERROR |
-                 BSP_UART_EVENT_TX_ERROR)) != 0U &&
+    if ((bits & (UART_EVENT_RX_OVERFLOW | UART_EVENT_RX_ERROR |
+                 UART_EVENT_TX_ERROR)) != 0U &&
         uart->error_event_bit != 0U) {
         mapped |= uart->error_event_bit;
     }
@@ -70,18 +108,14 @@ static EventBits_t BSP_UART_EventGroupBits(const BSP_UART_t *uart,
    setting requires either configUSE_TRACE_FACILITY, configUSE_TIMERS, or
    INCLUDE_xTimerPendFunctionCall; otherwise FreeRTOS has no deferred-call
    implementation and calling xEventGroupSetBitsFromISR would not link. */
-static EventBits_t BSP_UART_RecordEvents(BSP_UART_t *uart, EventBits_t bits)
+static EventBits_t UART_RecordEvents(UartInstance_t *uart, EventBits_t bits)
 {
     EventBits_t group_bits;
 
-    if (uart == NULL || bits == 0U) {
-        return 0U;
-    }
-
     uart->pending_events |= bits;
-    group_bits = BSP_UART_EventGroupBits(uart, bits);
+    group_bits = UART_EventGroupBits(uart, bits);
 
-    if (BSP_UART_InISR() != 0U) {
+    if (UART_InISR() != 0U) {
         BaseType_t higher_priority_task_woken = pdFALSE;
 
 #if (configUSE_TRACE_FACILITY == 1) || (configUSE_TIMERS == 1) || \
@@ -108,11 +142,8 @@ static EventBits_t BSP_UART_RecordEvents(BSP_UART_t *uart, EventBits_t bits)
     return bits;
 }
 
-static void BSP_UART_QueueReset(BSP_UART_t *uart)
+static void UART_QueueReset(UartInstance_t *uart)
 {
-    if (uart == NULL) {
-        return;
-    }
 
     uart->rx_read_index = 0U;
     uart->rx_write_index = 0U;
@@ -122,33 +153,33 @@ static void BSP_UART_QueueReset(BSP_UART_t *uart)
 /* Reserve a packet slot before copying.  The interrupt and task paths use the
    matching FreeRTOS critical-section primitive so a consumer never sees a
    partially written packet. */
-static BaseType_t BSP_UART_QueuePush(BSP_UART_t *uart,
+static BaseType_t UART_QueuePush(UartInstance_t *uart,
                                      const uint8_t *data, uint16_t size)
 {
     uint8_t index;
     BaseType_t accepted = pdFALSE;
 
     if (uart == NULL || data == NULL || size == 0U ||
-        size > BSP_UART_DMA_BUFFER_SIZE) {
+        size > UART_DMA_BUFFER_SIZE) {
         return pdFALSE;
     }
 
-    if (BSP_UART_InISR() != 0U) {
+    if (UART_InISR() != 0U) {
         UBaseType_t saved = taskENTER_CRITICAL_FROM_ISR();
-        if (uart->rx_pending_count < BSP_UART_RX_SLOT_COUNT) {
+        if (uart->rx_pending_count < UART_RX_SLOT_COUNT) {
             index = uart->rx_write_index;
             uart->rx_write_index = (uint8_t)((index + 1U) %
-                                              BSP_UART_RX_SLOT_COUNT);
+                                              UART_RX_SLOT_COUNT);
             uart->rx_pending_count++;
             accepted = pdTRUE;
         }
         taskEXIT_CRITICAL_FROM_ISR(saved);
     } else {
         taskENTER_CRITICAL();
-        if (uart->rx_pending_count < BSP_UART_RX_SLOT_COUNT) {
+        if (uart->rx_pending_count < UART_RX_SLOT_COUNT) {
             index = uart->rx_write_index;
             uart->rx_write_index = (uint8_t)((index + 1U) %
-                                              BSP_UART_RX_SLOT_COUNT);
+                                              UART_RX_SLOT_COUNT);
             uart->rx_pending_count++;
             accepted = pdTRUE;
         }
@@ -164,7 +195,7 @@ static BaseType_t BSP_UART_QueuePush(BSP_UART_t *uart,
     return pdTRUE;
 }
 
-static BaseType_t BSP_UART_QueuePop(BSP_UART_t *uart, uint8_t *data,
+static BaseType_t UART_QueuePop(UartInstance_t *uart, uint8_t *data,
                                     uint16_t capacity, uint16_t *size)
 {
     uint8_t index;
@@ -184,7 +215,7 @@ static BaseType_t BSP_UART_QueuePop(BSP_UART_t *uart, uint8_t *data,
                    packet_size);
             *size = packet_size;
             uart->rx_read_index = (uint8_t)((index + 1U) %
-                                             BSP_UART_RX_SLOT_COUNT);
+                                             UART_RX_SLOT_COUNT);
             uart->rx_pending_count--;
             accepted = pdTRUE;
         }
@@ -194,15 +225,10 @@ static BaseType_t BSP_UART_QueuePop(BSP_UART_t *uart, uint8_t *data,
     return accepted;
 }
 
-void BSP_UART_Register(BSP_UART_t *uart)
+void UART_Register(UartInstance_t *uart)
 {
     uint8_t i;
     uint8_t index;
-
-    if (uart == NULL || uart->huart == NULL) {
-        return;
-    }
-
     /* Re-registering an object is harmless and avoids allocating a second
        buffer pair when init code is called more than once. */
     for (i = 0U; i < uart_instance_count; ++i) {
@@ -214,41 +240,41 @@ void BSP_UART_Register(BSP_UART_t *uart)
             uart->rx_buffer[0] = uart_rx_dma[uart->instance_index][0];
             uart->rx_buffer[1] = uart_rx_dma[uart->instance_index][1];
             uart->tx_buffer = uart_tx_dma[uart->instance_index];
-            uart->rx_capacity = BSP_UART_DMA_BUFFER_SIZE;
+            uart->rx_capacity = UART_DMA_BUFFER_SIZE;
             uart->active_buffer = 0U;
             uart->registered = 1U;
             if (uart->rx_event_bit == 0U) {
-                uart->rx_event_bit = BSP_UART_EVENT_RX_READY;
+                uart->rx_event_bit = UART_EVENT_RX_READY;
             }
             if (uart->error_event_bit == 0U) {
-                uart->error_event_bit = BSP_UART_EVENT_RX_ERROR;
+                uart->error_event_bit = UART_EVENT_RX_ERROR;
             }
-            if (BSP_UART_EventGroup == NULL) {
-                BSP_UART_EventGroup = xEventGroupCreate();
+            if (UART_EventGroup == NULL) {
+                UART_EventGroup = xEventGroupCreate();
             }
             if (uart->event_group == NULL) {
-                uart->event_group = BSP_UART_EventGroup;
+                uart->event_group = UART_EventGroup;
             }
-            BSP_UART_QueueReset(uart);
+            UART_QueueReset(uart);
             return;
         }
     }
 
-    index = BSP_UART_MAX_INSTANCES;
+    index = UART_MAX_INSTANCES;
     for (i = 0U; i < uart_instance_count; ++i) {
         if (uart_instances[i] == NULL) {
             index = i;
             break;
         }
     }
-    if (index == BSP_UART_MAX_INSTANCES) {
-        if (uart_instance_count >= BSP_UART_MAX_INSTANCES) {
+    if (index == UART_MAX_INSTANCES) {
+        if (uart_instance_count >= UART_MAX_INSTANCES) {
             return;
         }
         index = uart_instance_count++;
     }
 
-    if (index >= BSP_UART_MAX_INSTANCES) {
+    if (index >= UART_MAX_INSTANCES) {
         return;
     }
     uart_instances[index] = uart;
@@ -256,28 +282,27 @@ void BSP_UART_Register(BSP_UART_t *uart)
     uart->rx_buffer[0] = uart_rx_dma[index][0];
     uart->rx_buffer[1] = uart_rx_dma[index][1];
     uart->tx_buffer = uart_tx_dma[index];
-    uart->rx_capacity = BSP_UART_DMA_BUFFER_SIZE;
+    uart->rx_capacity = UART_DMA_BUFFER_SIZE;
     uart->active_buffer = 0U;
     uart->rx_started = 0U;
     uart->tx_busy = 0U;
     uart->registered = 1U;
     uart->rx_event_bit = (uart->rx_event_bit != 0U) ? uart->rx_event_bit :
-                         BSP_UART_EVENT_RX_READY;
+                         UART_EVENT_RX_READY;
     uart->error_event_bit = (uart->error_event_bit != 0U) ?
-                            uart->error_event_bit : BSP_UART_EVENT_RX_ERROR;
-    if (BSP_UART_EventGroup == NULL) {
-        BSP_UART_EventGroup = xEventGroupCreate();
+                            uart->error_event_bit : UART_EVENT_RX_ERROR;
+    if (UART_EventGroup == NULL) {
+        UART_EventGroup = xEventGroupCreate();
     }
     if (uart->event_group == NULL) {
-        uart->event_group = BSP_UART_EventGroup;
+        uart->event_group = UART_EventGroup;
     }
     uart->pending_events = 0U;
-    uart->last_rx_size = 0U;
-    uart->last_rx_event = 0U;
-    BSP_UART_QueueReset(uart);
+    UartMonitor_Reset(&uart->monitor);
+    UART_QueueReset(uart);
 }
 
-void BSP_UART_Unregister(BSP_UART_t *uart)
+void UART_Unregister(UartInstance_t *uart)
 {
     uint8_t i;
 
@@ -300,7 +325,7 @@ void BSP_UART_Unregister(BSP_UART_t *uart)
     }
 }
 
-HAL_StatusTypeDef BSP_UART_StartReceiveEx(BSP_UART_t *uart)
+HAL_StatusTypeDef UART_StartReceiveEx(UartInstance_t *uart)
 {
     HAL_StatusTypeDef status;
     uint8_t *buffer;
@@ -326,12 +351,12 @@ HAL_StatusTypeDef BSP_UART_StartReceiveEx(BSP_UART_t *uart)
     return status;
 }
 
-void BSP_UART_StartReceive(BSP_UART_t *uart)
+void UART_StartReceive(UartInstance_t *uart)
 {
-    (void)BSP_UART_StartReceiveEx(uart);
+    (void)UART_StartReceiveEx(uart);
 }
 
-HAL_StatusTypeDef BSP_UART_StopReceive(BSP_UART_t *uart)
+HAL_StatusTypeDef UART_StopReceive(UartInstance_t *uart)
 {
     HAL_StatusTypeDef status;
 
@@ -348,7 +373,7 @@ HAL_StatusTypeDef BSP_UART_StopReceive(BSP_UART_t *uart)
     return status;
 }
 
-HAL_StatusTypeDef BSP_UART_TransmitDMAEx(BSP_UART_t *uart,
+HAL_StatusTypeDef UART_TransmitDMAEx(UartInstance_t *uart,
                                          const uint8_t *data,
                                          uint16_t size)
 {
@@ -356,7 +381,7 @@ HAL_StatusTypeDef BSP_UART_TransmitDMAEx(BSP_UART_t *uart,
 
     if (uart == NULL || uart->registered == 0U || uart->huart == NULL ||
         uart->tx_buffer == NULL || data == NULL || size == 0U ||
-        size > BSP_UART_TX_BUFFER_SIZE) {
+        size > UART_TX_BUFFER_SIZE) {
         return HAL_ERROR;
     }
     if (uart->tx_busy != 0U || uart->huart->gState != HAL_UART_STATE_READY) {
@@ -372,22 +397,22 @@ HAL_StatusTypeDef BSP_UART_TransmitDMAEx(BSP_UART_t *uart,
     return status;
 }
 
-void BSP_UART_TransmitDMA(BSP_UART_t *uart, const uint8_t *data,
+void UART_TransmitDMA(UartInstance_t *uart, const uint8_t *data,
                           uint16_t size)
 {
-    (void)BSP_UART_TransmitDMAEx(uart, data, size);
+    (void)UART_TransmitDMAEx(uart, data, size);
 }
 
-BaseType_t BSP_UART_RxPop(BSP_UART_t *uart, uint8_t *data,
+BaseType_t UART_RxPop(UartInstance_t *uart, uint8_t *data,
                           uint16_t capacity, uint16_t *size)
 {
     if (size != NULL) {
         *size = 0U;
     }
-    return BSP_UART_QueuePop(uart, data, capacity, size);
+    return UART_QueuePop(uart, data, capacity, size);
 }
 
-BaseType_t BSP_UART_Receive(BSP_UART_t *uart, uint8_t *data,
+BaseType_t UART_Receive(UartInstance_t *uart, uint8_t *data,
                             uint16_t capacity, uint16_t *size,
                             TickType_t timeout)
 {
@@ -395,7 +420,7 @@ BaseType_t BSP_UART_Receive(BSP_UART_t *uart, uint8_t *data,
     TickType_t elapsed;
     TickType_t remaining;
 
-    if (BSP_UART_RxPop(uart, data, capacity, size) == pdTRUE) {
+    if (UART_RxPop(uart, data, capacity, size) == pdTRUE) {
         return pdTRUE;
     }
     if (timeout == 0U || uart == NULL) {
@@ -405,12 +430,12 @@ BaseType_t BSP_UART_Receive(BSP_UART_t *uart, uint8_t *data,
     start_tick = xTaskGetTickCount();
     remaining = timeout;
     do {
-        (void)BSP_UART_WaitEvents(uart,
-                                   BSP_UART_EVENT_RX_READY |
-                                   BSP_UART_EVENT_RX_OVERFLOW |
-                                   BSP_UART_EVENT_RX_ERROR,
+        (void)UART_WaitEvents(uart,
+                                   UART_EVENT_RX_READY |
+                                   UART_EVENT_RX_OVERFLOW |
+                                   UART_EVENT_RX_ERROR,
                                    remaining);
-        if (BSP_UART_RxPop(uart, data, capacity, size) == pdTRUE) {
+        if (UART_RxPop(uart, data, capacity, size) == pdTRUE) {
             return pdTRUE;
         }
         elapsed = xTaskGetTickCount() - start_tick;
@@ -423,41 +448,41 @@ BaseType_t BSP_UART_Receive(BSP_UART_t *uart, uint8_t *data,
     return pdFALSE;
 }
 
-BaseType_t BSP_UART_Read(BSP_UART_t *uart, uint8_t *data,
+BaseType_t UART_Read(UartInstance_t *uart, uint8_t *data,
                          uint16_t capacity, uint16_t *size)
 {
-    return BSP_UART_RxPop(uart, data, capacity, size);
+    return UART_RxPop(uart, data, capacity, size);
 }
 
-uint16_t BSP_UART_RxAvailable(const BSP_UART_t *uart)
+uint16_t UART_RxAvailable(const UartInstance_t *uart)
 {
     return (uart != NULL) ? (uint16_t)uart->rx_pending_count : 0U;
 }
 
-void BSP_UART_SetEventGroup(BSP_UART_t *uart, EventGroupHandle_t group,
+void UART_SetEventGroup(UartInstance_t *uart, EventGroupHandle_t group,
                             EventBits_t rx_bit, EventBits_t error_bit)
 {
     if (uart == NULL) {
         return;
     }
     if (group == NULL) {
-        if (BSP_UART_EventGroup == NULL) {
-            BSP_UART_EventGroup = xEventGroupCreate();
+        if (UART_EventGroup == NULL) {
+            UART_EventGroup = xEventGroupCreate();
         }
-        group = BSP_UART_EventGroup;
+        group = UART_EventGroup;
     }
     uart->event_group = group;
-    uart->rx_event_bit = (rx_bit != 0U) ? rx_bit : BSP_UART_EVENT_RX_READY;
+    uart->rx_event_bit = (rx_bit != 0U) ? rx_bit : UART_EVENT_RX_READY;
     uart->error_event_bit = (error_bit != 0U) ? error_bit :
-                            BSP_UART_EVENT_RX_ERROR;
+                            UART_EVENT_RX_ERROR;
 }
 
-EventGroupHandle_t BSP_UART_GetEventGroup(const BSP_UART_t *uart)
+EventGroupHandle_t UART_GetEventGroup(const UartInstance_t *uart)
 {
     return (uart != NULL) ? uart->event_group : NULL;
 }
 
-BaseType_t BSP_UART_SetNotifyTask(BSP_UART_t *uart, TaskHandle_t task)
+BaseType_t UART_SetNotifyTask(UartInstance_t *uart, TaskHandle_t task)
 {
     if (uart == NULL) {
         return pdFALSE;
@@ -466,7 +491,7 @@ BaseType_t BSP_UART_SetNotifyTask(BSP_UART_t *uart, TaskHandle_t task)
     return pdTRUE;
 }
 
-EventBits_t BSP_UART_WaitEvents(BSP_UART_t *uart, EventBits_t bits,
+EventBits_t UART_WaitEvents(UartInstance_t *uart, EventBits_t bits,
                                 TickType_t timeout)
 {
     EventBits_t pending;
@@ -477,7 +502,7 @@ EventBits_t BSP_UART_WaitEvents(BSP_UART_t *uart, EventBits_t bits,
         return 0U;
     }
 
-    pending = BSP_UART_GetEvents(uart, pdTRUE);
+    pending = UART_GetEvents(uart, pdTRUE);
     if ((pending & bits) != 0U) {
         return pending;
     }
@@ -491,19 +516,19 @@ EventBits_t BSP_UART_WaitEvents(BSP_UART_t *uart, EventBits_t bits,
         (void)xTaskNotifyWait(0U, (uint32_t)bits, &notification_value,
                               timeout);
         pending |= (EventBits_t)notification_value;
-        pending |= BSP_UART_GetEvents(uart, pdTRUE);
+        pending |= UART_GetEvents(uart, pdTRUE);
         return pending;
     }
 
     if (uart->event_group != NULL) {
         pending |= xEventGroupWaitBits(uart->event_group,
-                                       BSP_UART_EventGroupBits(uart, bits),
+                                       UART_EventGroupBits(uart, bits),
                                        pdTRUE, pdFALSE, timeout);
     }
     return pending;
 }
 
-EventBits_t BSP_UART_GetEvents(BSP_UART_t *uart, BaseType_t clear)
+EventBits_t UART_GetEvents(UartInstance_t *uart, BaseType_t clear)
 {
     EventBits_t events;
 
@@ -520,40 +545,35 @@ EventBits_t BSP_UART_GetEvents(BSP_UART_t *uart, BaseType_t clear)
     return events;
 }
 
-EventBits_t BSP_UART_SetEvents(BSP_UART_t *uart, EventBits_t bits)
+EventBits_t UART_SetEvents(UartInstance_t *uart, EventBits_t bits)
 {
-    return BSP_UART_RecordEvents(uart, bits);
+    return UART_RecordEvents(uart, bits);
 }
 
-uint16_t BSP_UART_GetLastRxSize(const BSP_UART_t *uart)
+uint16_t UART_GetLastRxSize(const UartInstance_t *uart)
 {
-    return (uart != NULL) ? uart->last_rx_size : 0U;
+    return (uart != NULL) ? UartMonitor_GetLastRxSize(&uart->monitor) : 0U;
 }
 
-uint8_t BSP_UART_GetLastRxEvent(const BSP_UART_t *uart)
+uint8_t UART_GetLastRxEvent(const UartInstance_t *uart)
 {
-    return (uart != NULL) ? uart->last_rx_event : 0U;
+    return (uart != NULL) ? UartMonitor_GetLastRxEvent(&uart->monitor) : 0U;
 }
 
-void BSP_UART_ResetStats(BSP_UART_t *uart)
+void UART_ResetStats(UartInstance_t *uart)
 {
     if (uart == NULL) {
         return;
     }
     taskENTER_CRITICAL();
-    uart->rx_event_count = 0U;
-    uart->rx_error_count = 0U;
-    uart->rx_overflow_count = 0U;
-    uart->tx_error_count = 0U;
-    uart->last_rx_size = 0U;
-    uart->last_rx_event = 0U;
+    UartMonitor_Reset(&uart->monitor);
     uart->pending_events = 0U;
     taskEXIT_CRITICAL();
 }
 
 void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t size)
 {
-    BSP_UART_t *uart = BSP_UART_Find(huart);
+    UartInstance_t *uart = UART_Find(huart);
     uint8_t completed_index;
     uint8_t *completed;
 
@@ -563,62 +583,60 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t size)
 
     completed_index = uart->active_buffer;
     completed = uart->rx_buffer[completed_index];
-    uart->last_rx_size = size;
-    uart->last_rx_event = (huart != NULL) ? (uint8_t)huart->RxEventType : 0U;
-    uart->rx_event_count++;
+    UartMonitor_RecordRx(&uart->monitor, size,
+                         (huart != NULL) ? (uint8_t)huart->RxEventType : 0U);
     uart->rx_started = 0U;
 
     if (size != 0U && size <= uart->rx_capacity && completed != NULL) {
         SCB_InvalidateDCache_by_Addr(completed, (int32_t)size);
-        if (BSP_UART_QueuePush(uart, completed, size) == pdTRUE) {
-            (void)BSP_UART_RecordEvents(uart, BSP_UART_EVENT_RX_READY);
+        if (UART_QueuePush(uart, completed, size) == pdTRUE) {
+            (void)UART_RecordEvents(uart, UART_EVENT_RX_READY);
             if (uart->on_receive != NULL) {
-                /* The callback runs in the UART ISR.  Keep it short; tasks
-                   should consume packets through BSP_UART_RxPop/Receive. */
                 uart->on_receive(uart->context, completed, size);
             }
         } else {
-            uart->rx_overflow_count++;
-            (void)BSP_UART_RecordEvents(uart, BSP_UART_EVENT_RX_OVERFLOW);
+            UartMonitor_RecordRxOverflow(&uart->monitor);
+            (void)UART_RecordEvents(uart, UART_EVENT_RX_OVERFLOW);
         }
     } else {
-        uart->rx_error_count++;
-        (void)BSP_UART_RecordEvents(uart, BSP_UART_EVENT_RX_ERROR);
+        UartMonitor_RecordRxError(&uart->monitor);
+        (void)UART_RecordEvents(uart, UART_EVENT_RX_ERROR);
     }
 
     /* Switch only after the completed buffer has been copied. */
     uart->active_buffer ^= 1U;
-    if (BSP_UART_StartReceiveEx(uart) != HAL_OK) {
-        uart->rx_error_count++;
-        (void)BSP_UART_RecordEvents(uart, BSP_UART_EVENT_RX_ERROR);
+    if (UART_StartReceiveEx(uart) != HAL_OK) {
+        UartMonitor_RecordRxError(&uart->monitor);
+        (void)UART_RecordEvents(uart, UART_EVENT_RX_ERROR);
     }
 }
 
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
 {
-    BSP_UART_t *uart = BSP_UART_Find(huart);
+    UartInstance_t *uart = UART_Find(huart);
 
     if (uart == NULL) {
         return;
     }
     uart->tx_busy = 0U;
-    (void)BSP_UART_RecordEvents(uart, BSP_UART_EVENT_TX_DONE);
+    (void)UART_RecordEvents(uart, UART_EVENT_TX_DONE);
 }
 
 void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 {
-    BSP_UART_t *uart = BSP_UART_Find(huart);
+    UartInstance_t *uart = UART_Find(huart);
 
     if (uart == NULL) {
         return;
     }
 
     uart->tx_busy = 0U;
-    uart->rx_error_count++;
-    (void)BSP_UART_RecordEvents(uart, BSP_UART_EVENT_RX_ERROR |
-                                      BSP_UART_EVENT_TX_ERROR);
+    UartMonitor_RecordRxError(&uart->monitor);
+    UartMonitor_RecordTxError(&uart->monitor);
+    (void)UART_RecordEvents(uart, UART_EVENT_RX_ERROR |
+                                      UART_EVENT_TX_ERROR);
     if (uart->rx_started == 0U) {
         uart->active_buffer &= 1U;
-        (void)BSP_UART_StartReceiveEx(uart);
+        (void)UART_StartReceiveEx(uart);
     }
 }

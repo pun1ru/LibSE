@@ -2,19 +2,13 @@
 
 #include <string.h>
 
-static void Referee_OnUart(void *context, const uint8_t *data, uint16_t size)
+void Referee_Init(Referee_t *referee)
 {
-    Referee_Input((Referee_t *)context, data, size);
-}
+    if (referee == NULL) {
+        return;
+    }
 
-void Referee_Init(Referee_t *referee, UART_HandleTypeDef *huart)
-{
     memset(referee, 0, sizeof(*referee));
-    referee->uart.huart = huart;
-    referee->uart.on_receive = Referee_OnUart;
-    referee->uart.context = referee;
-    BSP_UART_Register(&referee->uart);
-    BSP_UART_StartReceive(&referee->uart);
 }
 
 void Referee_Reset(Referee_t *referee)

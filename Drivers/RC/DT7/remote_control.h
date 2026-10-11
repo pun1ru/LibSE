@@ -31,12 +31,9 @@ typedef struct {
     uint8_t stream[RC_DBUS_FRAME_LENGTH];
 } RC_Remote_t;
 
-/* Global instance used by ReceiveTask and application tasks. */
-extern RC_Remote_t rc_remote;
+void RC_Init(RC_Remote_t *remote);
 
-void RC_Remote_Init(RC_Remote_t *remote);
-
-/* Feed one packet popped from BSP_UART.  The input may contain partial or
+/* Feed one packet popped from UART.  The input may contain partial or
    multiple DBUS frames; the parser keeps state across calls. */
 void RC_Remote_Input(RC_Remote_t *remote, const uint8_t *data,
                      uint16_t size);

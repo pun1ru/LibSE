@@ -1,15 +1,12 @@
 #include "task_system.h"
 
 CanInstance_t can_instances[TASK_CAN_INSTANCE_COUNT];
+QueueSetHandle_t receive_can_queues;
 
-BSP_UART_t uart5_instance;
-BSP_UART_t uart7_instance;
-BSP_UART_t uart1_instance;
-BSP_UART_t uart2_instance;
-BSP_UART_t uart3_instance;
-BSP_UART_t uart10_instance;
+UartInstance_t uart_instances[TASK_UART_INSTANCE_COUNT];
 EventGroupHandle_t UartEventGroup;
 Referee_t referee_receiver;
+RC_Remote_t rc_receiver;
 
 TaskHandle_t MonitorTaskHandle;
 TaskHandle_t ReceiveTaskHandle;
