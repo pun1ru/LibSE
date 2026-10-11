@@ -2,9 +2,11 @@
 
 CanInstance_t can_instances[TASK_CAN_INSTANCE_COUNT];
 QueueSetHandle_t receive_can_queues;
+QueueSetHandle_t transmit_can_queues;
 
 UartInstance_t uart_instances[TASK_UART_INSTANCE_COUNT];
 EventGroupHandle_t UartEventGroup;
+
 Referee_t referee_receiver;
 RC_Remote_t rc_receiver;
 

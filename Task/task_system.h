@@ -34,7 +34,7 @@ enum {
 
 extern CanInstance_t can_instances[TASK_CAN_INSTANCE_COUNT];
 extern QueueSetHandle_t receive_can_queues;
-
+extern QueueSetHandle_t transmit_can_queues;
 extern UartInstance_t uart_instances[TASK_UART_INSTANCE_COUNT];
 extern EventGroupHandle_t UartEventGroup;
 extern Referee_t referee_receiver;

@@ -9,37 +9,19 @@
 
 void TransmitTask(void *argument)
 {
-    uint8_t instance_count = 0U;
-    CanInstance_t *instances = CAN_GetInstances(&instance_count);
-    QueueSetHandle_t queues;
     CanTxFrame_t frame;
 
     (void)argument;
-    if (instances == NULL || instance_count == 0U) {
-        vTaskDelete(NULL);
-        return;
-    }
-
-    queues = xQueueCreateSet((UBaseType_t)instance_count *
+    transmit_can_queues = xQueueCreateSet((UBaseType_t)TASK_CAN_INSTANCE_COUNT *
                             (UBaseType_t)CAN_TX_QUEUE_LENGTH);
-    if (queues == NULL) {
-        vTaskDelete(NULL);
-        return;
+    for (uint8_t i = 0U; i < TASK_CAN_INSTANCE_COUNT; ++i) {
+    xQueueAddToSet(can_instances[i].tx_queue, transmit_can_queues);  
     }
 
-    for (uint8_t i = 0U; i < instance_count; ++i) {
-        if (instances[i].tx_queue == NULL ||
-            xQueueAddToSet(instances[i].tx_queue, queues) != pdPASS) {
-            vQueueDelete(queues);
-            vTaskDelete(NULL);
-            return;
-        }
-    }
-
-    for (;;) {
+    while(1) {
         QueueSetMemberHandle_t ready = xQueueSelectFromSet(
-            queues, pdMS_TO_TICKS(TASK_TRANSMIT_PERIOD_MS));
-
+            transmit_can_queues, pdMS_TO_TICKS(TASK_TRANSMIT_PERIOD_MS));
+        //有就发    
         while (ready != NULL) {
             if (xQueueReceive(ready, &frame, 0U) == pdPASS) {
                 if (fdcanx_send_data(frame.can, frame.id, frame.data,
@@ -47,7 +29,7 @@ void TransmitTask(void *argument)
                     Monitor_TaskError(MONITOR_TASK_TRANSMIT);
                 }
             }
-            ready = xQueueSelectFromSet(queues, 0U);
+            ready = xQueueSelectFromSet(transmit_can_queues, 0U);
         }
         Monitor_TaskBeat(MONITOR_TASK_TRANSMIT);
     }

@@ -95,9 +95,9 @@ void InitTask(void const *argument)
     if (CreateTask(MonitorTask, "MonitorTask", TASK_MONITOR_STACK_SIZE,
                    TASK_MONITOR_PRIORITY, NULL, &MonitorTaskHandle) != pdPASS ||
         CreateTask(ReceiveTask, "ReceiveTask", TASK_RECEIVE_STACK_SIZE,
-                   TASK_RECEIVE_PRIORITY, can_instances, &ReceiveTaskHandle) != pdPASS ||
+                   TASK_RECEIVE_PRIORITY, NULL, &ReceiveTaskHandle) != pdPASS ||
         CreateTask(TransmitTask, "TransmitTask", TASK_TRANSMIT_STACK_SIZE,
-                   TASK_TRANSMIT_PRIORITY, can_instances, &TransmitTaskHandle) != pdPASS ||
+                   TASK_TRANSMIT_PRIORITY, NULL, &TransmitTaskHandle) != pdPASS ||
         CreateTask(INS_Task, "INSTask", TASK_INS_STACK_SIZE,
                    TASK_INS_PRIORITY, NULL, &INSTaskHandle) != pdPASS) {
         Error_Handler();
