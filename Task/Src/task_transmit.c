@@ -12,10 +12,9 @@ void TransmitTask(void *argument)
     CanTxFrame_t frame;
 
     (void)argument;
-    transmit_can_queues = xQueueCreateSet((UBaseType_t)TASK_CAN_INSTANCE_COUNT *
-                            (UBaseType_t)CAN_TX_QUEUE_LENGTH);
-    for (uint8_t i = 0U; i < TASK_CAN_INSTANCE_COUNT; ++i) {
-    xQueueAddToSet(can_instances[i].tx_queue, transmit_can_queues);  
+    if (transmit_can_queues == NULL) {
+        vTaskDelete(NULL);
+        return;
     }
 
     while(1) {

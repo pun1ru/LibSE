@@ -65,34 +65,13 @@ void TaskReceive_CANCallback(FDCAN_HandleTypeDef *can, uint16_t id,
 void CANReceive_Callback(FDCAN_HandleTypeDef *can, uint16_t id,
                          const uint8_t *data, uint8_t length)
 {
-    (void)can;
-    (void)id;
-    (void)data;
-    (void)length;
 }
-
-
 void UARTReceive_Callback(UartInstance_t *uart, const uint8_t *data,
                           uint16_t length)
 {
-    (void)uart;
-    (void)data;
-    (void)length;
 }
-/*----------------------------------------------------------------------------*/
-static void TaskReceive_StartCan(void)
-{
-    receive_can_queues = xQueueCreateSet(
-        (UBaseType_t)TASK_CAN_INSTANCE_COUNT *
-        (UBaseType_t)CAN_RX_QUEUE_LENGTH);
-
-    for (uint8_t i = 0U; i < TASK_CAN_INSTANCE_COUNT; ++i) {
-        xQueueAddToSet(can_instances[i].rx_queue, receive_can_queues);
-        }
-    
-}
-
-static void TaskReceive_StartUart(void)
+/*---------------------------------------初始化can/uart-------------------------------------*/
+static void TaskReceive_BindUartTask(void)
 {
     for (uint8_t i = 0U; i < TASK_UART_INSTANCE_COUNT; ++i) {
         UartInstance_t *uart = &uart_instances[i];
@@ -100,7 +79,7 @@ static void TaskReceive_StartUart(void)
     }
 }
 
-
+/*---------------------------------------uart数据处理-------------------------------------*/
 static void TaskReceive_ProcessUartInstance(UartInstance_t *uart)
 {
     uint8_t packet[TASK_UART_PACKET_SIZE];
@@ -169,9 +148,7 @@ void ReceiveTask(void *argument)
     (void)argument;
 
     TaskReceive_InitProtocols();
-    TaskReceive_StartCan();
-    TaskReceive_StartUart();
-
+    TaskReceive_BindUartTask();
 
     while(1) {
         //CAN/UART处理函数,调用回调函数
