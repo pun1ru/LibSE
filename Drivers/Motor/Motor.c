@@ -1,2 +1,2 @@
-#include "motor.h"
+#include "Motor.h"
 
