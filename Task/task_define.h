@@ -10,11 +10,13 @@
 #define TASK_INS_PERIOD_MS            2U
 
 #define TASK_MONITOR_STACK_SIZE       256U
+#define TASK_INIT_STACK_SIZE          384U
 #define TASK_RECEIVE_STACK_SIZE       512U
 #define TASK_TRANSMIT_STACK_SIZE      512U
 #define TASK_INS_STACK_SIZE           512U
 
 #define TASK_MONITOR_PRIORITY         1U
+#define TASK_INIT_PRIORITY            6U
 #define TASK_INS_PRIORITY             4U
 #define TASK_TRANSMIT_PRIORITY        5U
 #define TASK_RECEIVE_PRIORITY         6U

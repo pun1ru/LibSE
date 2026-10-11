@@ -44,15 +44,19 @@ void Monitor_TaskError(MonitorTaskId_t task)
     taskEXIT_CRITICAL();
 }
 
-void Monitor_Sample(void)
+uint8_t Monitor_Sample(void)
 {
     uint8_t task_index;
+    uint8_t went_offline = 0U;
 
     taskENTER_CRITICAL();
     for (task_index = 0U; task_index < MONITOR_TASK_COUNT; ++task_index) {
         MonitorTaskStatus_t *task = &monitor_status.task[task_index];
 
         if (heartbeat[task_index] == previous_heartbeat[task_index]) {
+            if (task->online != 0U) {
+                went_offline = 1U;
+            }
             task->online = 0U;
             ++task->error_count;
         } else {
@@ -61,6 +65,8 @@ void Monitor_Sample(void)
         }
     }
     taskEXIT_CRITICAL();
+
+    return went_offline;
 }
 
 void Monitor_GetSnapshot(MonitorStatus_t *status)

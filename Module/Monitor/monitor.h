@@ -23,7 +23,7 @@ typedef struct {
 void Monitor_Init(void);
 void Monitor_TaskBeat(MonitorTaskId_t task);
 void Monitor_TaskError(MonitorTaskId_t task);
-void Monitor_Sample(void);
+uint8_t Monitor_Sample(void);
 void Monitor_GetSnapshot(MonitorStatus_t *status);
 
 #endif

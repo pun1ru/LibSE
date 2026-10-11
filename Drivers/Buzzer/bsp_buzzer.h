@@ -13,6 +13,8 @@ typedef struct {
 
 void Buzzer_PlayPitch(uint8_t pitch);
 void Buzzer_PlayNotesV2(const MusicNoteV2_t *notes, uint32_t count);
+/* Call from a task after the scheduler starts; blocks for 100 ms. */
+void Buzzer_BeepOnce(void);
 #define  proport          240000 	//Tclk/(arr+1)=240000000/(1000)
 
 //根据Tout= ((arr+1)*(psc+1))/Tclk推出psc值就是本句define定义的值，Tout为音调频率131Hz的倒数，Tclk=APB1 CLK_INT = 240MHz

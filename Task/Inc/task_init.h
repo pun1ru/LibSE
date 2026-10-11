@@ -5,7 +5,7 @@
 
 void CANInit(void);
 void CommunicateInit(void);
-void InitTask(void const *argument);
+void InitTask(void *argument);
 
 #endif
 

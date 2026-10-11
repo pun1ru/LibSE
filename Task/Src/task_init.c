@@ -11,7 +11,7 @@
 #include "task_system.h"
 #include "task_transmit.h"
 #include "usart.h"
-
+#include "bsp_buzzer.h"
 #include "main.h"
 #include "event_groups.h"
 #include "task.h"
@@ -91,14 +91,14 @@ void CommunicateInit(void)
     UARTInit();
 }
 /*--------------------------------------任务初始化--------------------------------------*/
-void InitTask(void const *argument)
+void InitTask(void *argument)
 {
     (void)argument;
 
     DWT_Init(TASK_CPU_FREQUENCY_MHZ);
     Monitor_Init();
     CommunicateInit();
-
+    Buzzer_BeepOnce();
     xTaskCreate(MonitorTask, "MonitorTask", TASK_MONITOR_STACK_SIZE, NULL,
                 TASK_MONITOR_PRIORITY, &MonitorTaskHandle);
     xTaskCreate(ReceiveTask, "ReceiveTask", TASK_RECEIVE_STACK_SIZE, NULL,
@@ -107,5 +107,6 @@ void InitTask(void const *argument)
                 TASK_TRANSMIT_PRIORITY, &TransmitTaskHandle);
     xTaskCreate(INS_Task, "INSTask", TASK_INS_STACK_SIZE, NULL,
                 TASK_INS_PRIORITY, &INSTaskHandle);
-   
+
+    vTaskDelete(NULL);
 }

@@ -6,6 +6,7 @@
 #include "bsp_pwm.h"
 
 #include <math.h>
+#include <stddef.h>
 TIM_HandleTypeDef *Buzzer_Tim;
 uint32_t Buzzer_Channel;
 
@@ -277,4 +278,14 @@ void Buzzer_PlayNotesV2(const MusicNoteV2_t *notes, uint32_t count)
         vTaskDelay(pdMS_TO_TICKS(notes[i].duration_ms));
     }
     buzzer_off();
+}
+
+void Buzzer_BeepOnce(void)
+{
+    static const MusicNoteV2_t note = {69U, 100U};
+
+    if (Buzzer_Tim == NULL) {
+        Buzzer_Init(&htim12, TIM_CHANNEL_2);
+    }
+    Buzzer_PlayNotesV2(&note, 1U);
 }
