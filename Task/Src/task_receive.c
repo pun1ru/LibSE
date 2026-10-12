@@ -42,25 +42,11 @@ static void TaskReceive_InitProtocols(void)
     RC_Init(&rc_receiver);
     //定义函数指针映射到对应的回调函数
     //UART回调
-    uart_instances[TASK_UART_HUART5_INDEX].on_packet =
-        TaskReceive_RCInput;
-    uart_instances[TASK_UART_HUART5_INDEX].on_error =
-        TaskReceive_RCError;
-    uart_instances[TASK_UART_HUART1_INDEX].on_packet =
-        TaskReceive_RefereeInput;
-    uart_instances[TASK_UART_HUART1_INDEX].on_error =
-        TaskReceive_RefereeError;
+    uart_instances[TASK_UART_HUART5_INDEX].on_packet = TaskReceive_RCInput;
+    uart_instances[TASK_UART_HUART5_INDEX].on_error = TaskReceive_RCError;
+    uart_instances[TASK_UART_HUART1_INDEX].on_packet = TaskReceive_RefereeInput;
+    uart_instances[TASK_UART_HUART1_INDEX].on_error = TaskReceive_RefereeError;
 }
-
-void TaskReceive_CANCallback(FDCAN_HandleTypeDef *can, uint16_t id,
-                             const uint8_t *data, uint8_t length)
-{
-    (void)can;
-    (void)id;
-    (void)data;
-    (void)length;
-}
-
 /*--------------------------------------默认回调函数--------------------------------------*/
 void CANReceive_Callback(FDCAN_HandleTypeDef *can, uint16_t id,
                          const uint8_t *data, uint8_t length)
