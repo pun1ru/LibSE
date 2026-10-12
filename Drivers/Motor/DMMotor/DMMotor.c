@@ -3,9 +3,20 @@
 #include <stddef.h>
 #include <string.h>
 
+#define DM_ENCODER_COUNTS 65536U
+#define DM_TWO_PI 6.283185307179586f
+
 //uint16_t与float之间的映射函数
 static uint16_t DMMotor_Encode(float value, float min, float max, uint8_t bits)
 {
+    if (value < min)
+    {
+        value = min;
+    }
+    else if (value > max)
+    {
+        value = max;
+    }
     return (uint16_t)((value - min) * (float)((1U << bits) - 1U) / (max - min));
 }
 
@@ -43,21 +54,33 @@ static void DMMotor_SendClearError(Motor_t *base)
     DMMotor_SendFrame(motor, motor->motor_config.motor_id, data);
 }
 
+static void DMMotor_SendFromBase(Motor_t *base)
+{
+    DMMotor_SendCommand((DMMotor_t *)base);
+}
+
+static void DMMotor_FeedbackFromBase(Motor_t *base, const uint8_t *data,
+                                     uint16_t rec_id)
+{
+    DMMotor_Feedback((DMMotor_t *)base, data, rec_id);
+}
+
 void DMMotor_Feedback(DMMotor_t *motor, const uint8_t data[8],uint16_t rec_id)
 {
-    motor->base.feedback.timestamp++;
-    if(rec_id != motor->motor_config.feedback_id)
+    if(rec_id != motor->motor_config.feedback_id ||
+       (data[0] & 0x0FU) != (motor->motor_config.motor_id & 0x0FU))
     {
         return;
     }
     Feedback_t *feedback = &motor->base.feedback;
+    feedback->timestamp++;
     const LSB *limits = &motor->motor_config.lsb;
     uint16_t position_raw = ((uint16_t)data[1] << 8) | data[2];
     uint16_t velocity_raw = ((uint16_t)data[3] << 4) | (data[4] >> 4);
     uint16_t torque_raw = ((uint16_t)(data[4] & 0x0FU) << 8) | data[5];
-    feedback->position = DMMotor_Decode(position_raw, limits->p_min,
-                                        limits->p_max, 16U);
-    feedback->abs_angle = feedback->position;
+    feedback->encoder = position_raw;
+    feedback->abs_angle = (float)(uint16_t)(position_raw - motor->base.zero_point) *
+                          DM_TWO_PI / (float)DM_ENCODER_COUNTS;
     feedback->velocity = DMMotor_Decode(velocity_raw, limits->v_min,
                                         limits->v_max, 12U);
     feedback->omega = feedback->velocity;
@@ -113,18 +136,33 @@ void DMMotor_Init(DMMotor_t *motor, const MotorConfig_t *config)
         saved_config.lsb.t_min = DM4310_T_MIN;
         saved_config.lsb.t_max = DM4310_T_MAX;
         break;
+    case DM_6006:
+        saved_config.lsb.p_min = DM6006_P_MIN;
+        saved_config.lsb.p_max = DM6006_P_MAX;
+        saved_config.lsb.v_min = DM6006_V_MIN;
+        saved_config.lsb.v_max = DM6006_V_MAX;
+        saved_config.lsb.kp_min = DM6006_KP_MIN;
+        saved_config.lsb.kp_max = DM6006_KP_MAX;
+        saved_config.lsb.kd_min = DM6006_KD_MIN;
+        saved_config.lsb.kd_max = DM6006_KD_MAX;
+        saved_config.lsb.t_min = DM6006_T_MIN;
+        saved_config.lsb.t_max = DM6006_T_MAX;
+        break;
     default:
         return;
     }
 
     memset(motor, 0, sizeof(*motor));
     motor->motor_config = saved_config;
+    motor->base.zero_point = config->zero_point;
+    motor->base.inverse = config->inverse;
     motor->base.feedback.status = MOTOR_NO_FEEDBACK;
     motor->base.motorops.enable = DMMotor_SendEnable;
     motor->base.motorops.disable = DMMotor_SendDisable;
     motor->base.motorops.protect = DMMotor_SendDisable;
-    motor->base.motorops.sendcommand = DMMotor_SendCommand;
+    motor->base.motorops.sendcommand = DMMotor_SendFromBase;
     motor->base.motorops.clearerror = DMMotor_SendClearError;
+    motor->base.motorops.getfeedback = DMMotor_FeedbackFromBase;
 }
 
 void DMMotor_SendCommand(DMMotor_t *motor)
@@ -144,13 +182,15 @@ void DMMotor_SendCommand(DMMotor_t *motor)
         float target_velocity = torque_only ? 0.0f : command->velocity;
         float target_kp = torque_only ? 0.0f : command->kp;
         float target_kd = torque_only ? 0.0f : command->kd;
+        float target_torque = motor->base.inverse ? -command->torque :
+                              command->torque;
         uint16_t position = DMMotor_Encode(target_position, limits->p_min,
                                   limits->p_max, 16U);
         uint16_t velocity = DMMotor_Encode(target_velocity, limits->v_min,
                                   limits->v_max, 12U);
         uint16_t kp = DMMotor_Encode(target_kp, limits->kp_min, limits->kp_max, 12U);
         uint16_t kd = DMMotor_Encode(target_kd, limits->kd_min, limits->kd_max, 12U);
-        uint16_t torque = DMMotor_Encode(command->torque, limits->t_min,
+        uint16_t torque = DMMotor_Encode(target_torque, limits->t_min,
                                 limits->t_max, 12U);
         data[0] = (uint8_t)(position >> 8);
         data[1] = (uint8_t)position;

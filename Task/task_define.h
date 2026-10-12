@@ -7,6 +7,7 @@
 #define TASK_MONITOR_PERIOD_MS        100U
 #define TASK_RECEIVE_PERIOD_MS        2U
 #define TASK_TRANSMIT_PERIOD_MS       1U
+#define TASK_LK_FEEDBACK_PERIOD_MS    10U
 #define TASK_INS_PERIOD_MS            2U
 
 #define TASK_MONITOR_STACK_SIZE       256U

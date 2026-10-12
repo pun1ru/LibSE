@@ -34,12 +34,63 @@ static void TaskReceive_RefereeError(void)
 {
     Referee_Reset(&referee_receiver);
 }
+
+static void TaskReceive_DispatchMotorFeedback(const TaskMotorBinding_t *bindings,
+                                              uint8_t binding_count, uint16_t id,
+                                              const uint8_t *data, uint8_t length)
+{
+    if (length != CAN_FRAME_DATA_MAX)
+    {
+        return;
+    }
+
+    for (uint8_t index = 0U; index < binding_count; ++index)
+    {
+        const TaskMotorBinding_t *binding = &bindings[index];
+        if (id == binding->feedback_id)
+        {
+            binding->motor->motorops.getfeedback(binding->motor, data, id);
+            break;
+        }
+    }
+}
+
+static void TaskReceive_CAN1Callback(FDCAN_HandleTypeDef *can, uint16_t id,
+                                      const uint8_t *data, uint8_t length)
+{
+    (void)can;
+    TaskReceive_DispatchMotorFeedback(can1MotorBindings,
+                                      TASK_CAN1_MOTOR_BINDING_COUNT,
+                                      id, data, length);
+}
+
+static void TaskReceive_CAN2Callback(FDCAN_HandleTypeDef *can, uint16_t id,
+                                      const uint8_t *data, uint8_t length)
+{
+    (void)can;
+    TaskReceive_DispatchMotorFeedback(can2MotorBindings,
+                                      TASK_CAN2_MOTOR_BINDING_COUNT,
+                                      id, data, length);
+}
+
+static void TaskReceive_CAN3Callback(FDCAN_HandleTypeDef *can, uint16_t id,
+                                      const uint8_t *data, uint8_t length)
+{
+    (void)can;
+    TaskReceive_DispatchMotorFeedback(can3MotorBindings,
+                                      TASK_CAN3_MOTOR_BINDING_COUNT,
+                                      id, data, length);
+}
 /*--------------------------------------初始化协议--------------------------------------*/
 static void TaskReceive_InitProtocols(void)
 {
     //初始化
     Referee_Init(&referee_receiver);
     RC_Init(&rc_receiver);
+    // CAN callbacks
+    can_instances[0].on_receive = TaskReceive_CAN1Callback;
+    can_instances[1].on_receive = TaskReceive_CAN2Callback;
+    can_instances[2].on_receive = TaskReceive_CAN3Callback;
     //定义函数指针映射到对应的回调函数
     //UART回调
     uart_instances[TASK_UART_HUART5_INDEX].on_packet = TaskReceive_RCInput;

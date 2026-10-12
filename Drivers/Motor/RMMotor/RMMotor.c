@@ -4,7 +4,9 @@
 #include <string.h>
 
 #define RM_ENCODER_COUNTS 8192
+#define RM_HALF_ENCODER_COUNTS (RM_ENCODER_COUNTS / 2)
 #define RM_TWO_PI 6.283185307179586f
+#define RM_SECONDS_PER_MINUTE 60.0f
 
 static uint8_t RMMotor_Slot(uint8_t motor_id)
 {
@@ -14,6 +16,10 @@ static uint8_t RMMotor_Slot(uint8_t motor_id)
 static int16_t RMMotor_Setpoint(const RMMotor_t *motor)
 {
     float value = motor->base.motorcmd.current;
+    if (motor->base.inverse && motor->motor_config.mode == RM_CURRENT)
+    {
+        value = -value;
+    }
     float limit = motor->motor_config.motor_type == RM_C610 ? RM_C610_CURRENT_LIMIT :
                   motor->motor_config.motor_type == RM_C620 ? RM_C620_CURRENT_LIMIT :
                   motor->motor_config.mode == RM_VOLTAGE ? RM_GM6020_VOLTAGE_LIMIT :
@@ -48,6 +54,12 @@ static void RMMotor_SendFromBase(Motor_t *base)
     RMMotor_SendGroupCommand((RMMotor_t *)base);
 }
 
+static void RMMotor_FeedbackFromBase(Motor_t *base, const uint8_t *data,
+                                     uint16_t rec_id)
+{
+    RMMotor_Feedback((RMMotor_t *)base, data, rec_id);
+}
+
 static void RMMotor_Disable(Motor_t *base)
 {
     RMMotor_t *motor = (RMMotor_t *)base;
@@ -70,18 +82,20 @@ void RMMotor_Init(RMMotor_t *motor, RMMotorGroup_t *group,
     memset(motor, 0, sizeof(*motor));
     motor->motor_config = *config;
     motor->group = group;
+    motor->base.zero_point = config->zero_point;
+    motor->base.inverse = config->inverse;
     motor->base.feedback.status = MOTOR_NO_FEEDBACK;
     motor->base.motorcmd.control_mode = MODE_CURRENT;
     motor->base.motorops.disable = RMMotor_Disable;
     motor->base.motorops.protect = RMMotor_Disable;
     motor->base.motorops.sendcommand = RMMotor_SendFromBase;
     motor->base.motorops.sendgroupcommand = RMMotor_SendFromBase;
+    motor->base.motorops.getfeedback = RMMotor_FeedbackFromBase;
     group->motors[RMMotor_Slot(config->motor_id)] = motor;
 }
 
 void RMMotor_Feedback(RMMotor_t *motor, const uint8_t data[8], uint16_t rec_id)
 {
-    motor->base.feedback.timestamp++;
     uint16_t feedback_id = motor->motor_config.motor_type == RM_GM6020 ?
                            (uint16_t)(0x204U + motor->motor_config.motor_id) :
                            (uint16_t)(0x200U + motor->motor_config.motor_id);
@@ -94,12 +108,40 @@ void RMMotor_Feedback(RMMotor_t *motor, const uint8_t data[8], uint16_t rec_id)
         return;
     }
 
+    if (motor->has_encoder != 0U)
+    {
+        int32_t delta = (int32_t)encoder - (int32_t)motor->last_encoder;
+        if (delta > RM_HALF_ENCODER_COUNTS)
+        {
+            motor->rounds--;
+        }
+        else if (delta < -RM_HALF_ENCODER_COUNTS)
+        {
+            motor->rounds++;
+        }
+    }
+    motor->last_encoder = encoder;
+    motor->has_encoder = 1U;
+
     int16_t speed_rpm = (int16_t)(((uint16_t)data[2] << 8) | data[3]);
+    int16_t current_raw = (int16_t)(((uint16_t)data[4] << 8) | data[5]);
+    int32_t zeroed_encoder = (int32_t)encoder -
+                             (int32_t)(motor->base.zero_point % RM_ENCODER_COUNTS);
+    if (zeroed_encoder < 0)
+    {
+        zeroed_encoder += RM_ENCODER_COUNTS;
+    }
     Feedback_t *feedback = &motor->base.feedback;
-    feedback->position = (float)encoder * RM_TWO_PI / RM_ENCODER_COUNTS;
-    feedback->abs_angle = feedback->position;
-    feedback->velocity = (float)speed_rpm;
-    feedback->omega = feedback->velocity * RM_TWO_PI / 60.0f;
+    feedback->timestamp++;
+    feedback->encoder = encoder;
+    feedback->abs_angle = (float)zeroed_encoder * RM_TWO_PI / RM_ENCODER_COUNTS;
+    feedback->multi_angle = ((float)motor->rounds +
+                             (float)encoder / RM_ENCODER_COUNTS) * RM_TWO_PI;
+    feedback->velocity = (float)speed_rpm * RM_TWO_PI / RM_SECONDS_PER_MINUTE;
+    feedback->omega = feedback->velocity;
+    if (motor->motor_config.motor_type == RM_C620) {
+        feedback->current = (float)current_raw * RM_C620_CURRENT_PER_LSB;
+    }
     if (motor->motor_config.motor_type == RM_C620) {
         feedback->temp = (float)data[6];
     } else if (motor->motor_config.motor_type == RM_GM6020) {

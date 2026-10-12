@@ -17,10 +17,20 @@
 void TransmitTask(void *argument)
 {
     CanTxFrame_t frame;
+    TickType_t last_lk_request;
 
     (void)argument;
+    last_lk_request = xTaskGetTickCount() -
+                      pdMS_TO_TICKS(TASK_LK_FEEDBACK_PERIOD_MS);
 
     while(1) {
+        TickType_t now = xTaskGetTickCount();
+        if ((TickType_t)(now - last_lk_request) >=
+            pdMS_TO_TICKS(TASK_LK_FEEDBACK_PERIOD_MS))
+        {
+            pitchMotor->motorops.requestfeedback(pitchMotor);
+            last_lk_request = now;
+        }
         QueueSetMemberHandle_t ready = xQueueSelectFromSet(
             transmit_can_queues, pdMS_TO_TICKS(TASK_TRANSMIT_PERIOD_MS));
         //有就发    

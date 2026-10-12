@@ -46,15 +46,12 @@ void CANInit(void)
 
     can_instances[0].can = &hfdcan1;
     can_instances[0].rx_fifo = FDCAN_RX_FIFO0;
-    can_instances[0].on_receive = TaskReceive_CANCallback;
 
     can_instances[1].can = &hfdcan2;
     can_instances[1].rx_fifo = FDCAN_RX_FIFO1;
-    can_instances[1].on_receive = TaskReceive_CANCallback;
 
     can_instances[2].can = &hfdcan3;
     can_instances[2].rx_fifo = FDCAN_RX_FIFO1;
-    can_instances[2].on_receive = TaskReceive_CANCallback;
 
     CAN_RegisterInstances(can_instances, TASK_CAN_INSTANCE_COUNT);
     CANTransmit_QueueInit();
@@ -100,6 +97,7 @@ void InitTask(void *argument)
     DWT_Init(TASK_CPU_FREQUENCY_MHZ);
     Monitor_Init();
     CommunicateInit();
+    TaskSystem_InitMotors();
     WS2812_SPI_Init(&hspi6);
     Buzzer_BeepOnce();
     xTaskCreate(MonitorTask, "MonitorTask", TASK_MONITOR_STACK_SIZE, NULL,

@@ -10,6 +10,8 @@
 #define RM_C620_CURRENT_LIMIT 16384.0f
 #define RM_GM6020_CURRENT_LIMIT 16384.0f
 #define RM_GM6020_VOLTAGE_LIMIT 25000.0f
+#define RM_C620_CURRENT_PER_LSB (20.0f / 16384.0f)
+#define RM_C620_FEEDBACK_ID_BASE 0x200U
 
 typedef enum {
     RM_C610,
@@ -26,6 +28,8 @@ typedef struct {
     RMMotorType_t motor_type;
     RMMotorMode_t mode;
     uint8_t motor_id;
+    uint16_t zero_point;
+    bool inverse;
 } RMMotorConfig_t;
 
 typedef struct RMMotor RMMotor_t;
@@ -40,6 +44,9 @@ struct RMMotor {
     Motor_t base;
     RMMotorConfig_t motor_config;
     RMMotorGroup_t *group;
+    uint16_t last_encoder;
+    int32_t rounds;
+    uint8_t has_encoder;
 };
 
 /* C610/C620: 0x200 (ID 1-4), 0x1FF (ID 5-8).

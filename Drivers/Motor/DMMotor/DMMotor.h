@@ -31,6 +31,8 @@ typedef struct {
     FDCAN_HandleTypeDef *can;
     uint16_t motor_id;
     uint16_t feedback_id;
+    uint16_t zero_point;
+    bool inverse;
     LSB lsb;
 } MotorConfig_t;
 
@@ -53,5 +55,17 @@ void DMMotor_Feedback(DMMotor_t *motor, const uint8_t data[8], uint16_t rec_id);
 #define DM4310_KD_MAX 5.0f
 #define DM4310_T_MIN -11.0f
 #define DM4310_T_MAX 11.0f
+
+/* MIT limits must match the values configured in the motor controller. */
+#define DM6006_P_MIN -3.14f
+#define DM6006_P_MAX 3.14f
+#define DM6006_V_MIN -45.0f
+#define DM6006_V_MAX 45.0f
+#define DM6006_KP_MIN 0.0f
+#define DM6006_KP_MAX 500.0f
+#define DM6006_KD_MIN 0.0f
+#define DM6006_KD_MAX 5.0f
+#define DM6006_T_MIN -12.0f
+#define DM6006_T_MAX 12.0f
 
 #endif
