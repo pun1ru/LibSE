@@ -17,9 +17,6 @@
 #define LK_PI                      3.141592653589793f
 #define LK_DEGREES_PER_REVOLUTION  360.0f
 #define LK_RAD_PER_DEGREE          (LK_PI / 180.0f)
-#define LK_STATE_REQUEST           0U
-#define LK_ANGLE_REQUEST           1U
-#define LK_ERROR_REQUEST           2U
 #define LK_ERROR_UNDERVOLTAGE      (1U << 0U)
 #define LK_ERROR_OVERVOLTAGE       (1U << 1U)
 #define LK_ERROR_MOS_OVERTEMP      (1U << 2U)
@@ -113,7 +110,6 @@ void LKMotor_Init(LKMotor_t *motor, const LKMotorConfig_t *config)
     motor->base.zero_point = config->zero_point;
     motor->base.inverse = config->inverse;
     motor->base.feedback.status = MOTOR_NO_FEEDBACK;
-    motor->base.motorcmd.control_mode = MODE_CURRENT;
     motor->base.motorops.enable = LKMotor_Enable;
     motor->base.motorops.disable = LKMotor_Disable;
     motor->base.motorops.protect = LKMotor_Protect;
@@ -169,27 +165,13 @@ void LKMotor_SendCommand(LKMotor_t *motor)
 void LKMotor_RequestFeedback(LKMotor_t *motor)
 {
     uint8_t data[8] = {0};
-    if (motor->next_request == LK_STATE_REQUEST)
-    {
-        data[0] = LK_CMD_READ_STATE;
-        motor->next_request = LK_ANGLE_REQUEST;
-    }
-    else if (motor->next_request == LK_ANGLE_REQUEST)
-    {
-        data[0] = LK_CMD_READ_MULTI_ANGLE;
-        motor->next_request = LK_ERROR_REQUEST;
-    }
-    else
-    {
-        data[0] = LK_CMD_READ_ERROR;
-        motor->next_request = LK_STATE_REQUEST;
-    }
+    data[0] = LK_CMD_READ_MULTI_ANGLE;
     LKMotor_SendFrame(motor, data);
 }
 
 void LKMotor_Feedback(LKMotor_t *motor, const uint8_t data[8], uint16_t rec_id)
 {
-    if (rec_id != (uint16_t)(LK_CAN_FEEDBACK_ID_BASE + motor->motor_config.motor_id))
+    if (rec_id != motor->motor_config.feedback_id)
     {
         return;
     }

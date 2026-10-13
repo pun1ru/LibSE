@@ -50,6 +50,7 @@ void TaskSystem_InitMotors(void)
     LKMotorConfig_t pitch_config = {
         .can = &hfdcan1,
         .motor_id = TASK_PITCH_MOTOR_ID,
+        .feedback_id = LK_CAN_COMMAND_ID_BASE + TASK_PITCH_MOTOR_ID,
         .max_speed_dps = 0U,
         .current_per_lsb = LK_MF_CURRENT_PER_LSB,
         .zero_point = 0U,
@@ -65,10 +66,11 @@ void TaskSystem_InitMotors(void)
     };
 
     LKMotor_Init(&pitchMotorInstance, &pitch_config);
+    pitchMotor->motorcmd.control_mode = MODE_CURRENT;
     RMMotorGroup_Init(&fricMotorGroups[0], &hfdcan2, TASK_FRIC_LOW_GROUP_ID);
     RMMotorGroup_Init(&fricMotorGroups[1], &hfdcan2, TASK_FRIC_HIGH_GROUP_ID);
 
-    can1MotorBindings[0].feedback_id = LK_CAN_FEEDBACK_ID_BASE + TASK_PITCH_MOTOR_ID;
+    can1MotorBindings[0].feedback_id = pitch_config.feedback_id;
     can1MotorBindings[0].motor = pitchMotor;
     for (uint8_t index = 0U; index < TASK_FRIC_MOTOR_COUNT; ++index)
     {
@@ -83,11 +85,13 @@ void TaskSystem_InitMotors(void)
                                 &fricMotorGroups[0] : &fricMotorGroups[1];
         RMMotor_Init(&fricMotorInstances[index], group, &friction_config);
         fricMotors[index] = &fricMotorInstances[index].base;
+        fricMotors[index]->motorcmd.control_mode = MODE_CURRENT;
         can2MotorBindings[index].feedback_id =
             RM_C620_FEEDBACK_ID_BASE + friction_motor_ids[index];
         can2MotorBindings[index].motor = fricMotors[index];
     }
     DMMotor_Init(&yawMotorInstance, &yaw_config);
+    yawMotor->motorcmd.control_mode = MODE_MIT;
     can3MotorBindings[0].feedback_id = TASK_YAW_FEEDBACK_ID;
     can3MotorBindings[0].motor = yawMotor;
 }

@@ -19,6 +19,7 @@
 typedef struct {
     FDCAN_HandleTypeDef *can;
     uint8_t motor_id;
+    uint16_t feedback_id;
     uint16_t max_speed_dps;
     float current_per_lsb;
     uint16_t zero_point;
@@ -28,7 +29,6 @@ typedef struct {
 typedef struct {
     Motor_t base;
     LKMotorConfig_t motor_config;
-    uint8_t next_request;
 } LKMotor_t;
 
 void LKMotor_Init(LKMotor_t *motor, const LKMotorConfig_t *config);

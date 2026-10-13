@@ -85,7 +85,6 @@ void RMMotor_Init(RMMotor_t *motor, RMMotorGroup_t *group,
     motor->base.zero_point = config->zero_point;
     motor->base.inverse = config->inverse;
     motor->base.feedback.status = MOTOR_NO_FEEDBACK;
-    motor->base.motorcmd.control_mode = MODE_CURRENT;
     motor->base.motorops.disable = RMMotor_Disable;
     motor->base.motorops.protect = RMMotor_Disable;
     motor->base.motorops.sendcommand = RMMotor_SendFromBase;

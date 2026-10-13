@@ -5,6 +5,12 @@
 #include <stddef.h>
 #include <string.h>
 
+#define CAN_TX_REQUEST_ALL             0xFFFFFFFFU
+#define CAN_TX_ERROR_RECOVER_THRESHOLD 128U
+#define CAN_TX_FIFO_STUCK_POLLS        3U
+#define CAN_RECOVER_COOLDOWN_MS         100U
+#define CAN_RECOVER_COOLDOWN_TICKS     pdMS_TO_TICKS(CAN_RECOVER_COOLDOWN_MS)
+
 static CanInstance_t *can_instances;
 static uint8_t can_instance_count;
 
@@ -47,10 +53,11 @@ static QueueHandle_t CANTransmit_QueueFor(FDCAN_HandleTypeDef *hcan)
     return (instance != NULL) ? instance->tx_queue : NULL;
 }
 
-static void CAN_ConfigFilter(const CanInstance_t *instance)
+static HAL_StatusTypeDef CAN_ConfigFilter(const CanInstance_t *instance)
 {
-    if (instance == NULL || instance->can == NULL) {
-        return;
+    if (instance == NULL || instance->can == NULL)
+    {
+        return HAL_ERROR;
     }
 
     FDCAN_FilterTypeDef filter = {0};
@@ -62,11 +69,14 @@ static void CAN_ConfigFilter(const CanInstance_t *instance)
     filter.FilterConfig = (instance->rx_fifo == FDCAN_RX_FIFO0) ?
                           FDCAN_FILTER_TO_RXFIFO0 : FDCAN_FILTER_TO_RXFIFO1;
 
-    (void)HAL_FDCAN_ConfigFilter(instance->can, &filter);
-    (void)HAL_FDCAN_ConfigGlobalFilter(instance->can,
-                                       FDCAN_REJECT, FDCAN_REJECT,
-                                       FDCAN_FILTER_REMOTE,
-                                       FDCAN_FILTER_REMOTE);
+    if (HAL_FDCAN_ConfigFilter(instance->can, &filter) != HAL_OK)
+    {
+        return HAL_ERROR;
+    }
+    return HAL_FDCAN_ConfigGlobalFilter(instance->can,
+                                        FDCAN_REJECT, FDCAN_REJECT,
+                                        FDCAN_FILTER_REMOTE,
+                                        FDCAN_FILTER_REMOTE);
 }
 
 void can_filter_init(void)
@@ -76,21 +86,27 @@ void can_filter_init(void)
     }
 
     for (uint8_t i = 0U; i < can_instance_count; ++i) {
-        CAN_ConfigFilter(&can_instances[i]);
+        (void)CAN_ConfigFilter(&can_instances[i]);
     }
 }
 
-void CANReceiveEnable(FDCAN_HandleTypeDef *hcan)
+static HAL_StatusTypeDef CAN_ActivateNotifications(CanInstance_t *instance)
 {
-    CanInstance_t *instance = CAN_InstanceFor(hcan);
-    if (instance == NULL || instance->can == NULL) {
-        return;
+    if (instance == NULL || instance->can == NULL)
+    {
+        return HAL_ERROR;
     }
 
     uint32_t notification = (instance->rx_fifo == FDCAN_RX_FIFO0) ?
                             FDCAN_IT_RX_FIFO0_NEW_MESSAGE :
                             FDCAN_IT_RX_FIFO1_NEW_MESSAGE;
-    (void)HAL_FDCAN_ActivateNotification(instance->can, notification, 0U);
+    notification |= FDCAN_IT_BUS_OFF;
+    return HAL_FDCAN_ActivateNotification(instance->can, notification, 0U);
+}
+
+void CANReceiveEnable(FDCAN_HandleTypeDef *hcan)
+{
+    (void)CAN_ActivateNotifications(CAN_InstanceFor(hcan));
 }
 
 void CANInitialize(FDCAN_HandleTypeDef *hcan)
@@ -120,6 +136,8 @@ void can_bsp_init(void)
         if (instance->can == NULL) {
             continue;
         }
+        instance->monitor.tx_fifo_capacity = instance->can->Init.TxFifoQueueElmtsNbr;
+        instance->monitor.tx_fifo_min_free = instance->monitor.tx_fifo_capacity;
         if (HAL_FDCAN_Start(instance->can) != HAL_OK) {
             instance->monitor.err_reinit++;
             continue;
@@ -128,10 +146,150 @@ void can_bsp_init(void)
     }
 }
 
+static void CAN_MonitorRefresh(CanInstance_t *instance)
+{
+    FDCAN_HandleTypeDef *hcan = instance->can;
+    CANTxMonitor *monitor = &instance->monitor;
+    FDCAN_ProtocolStatusTypeDef protocol_status;
+    FDCAN_ErrorCountersTypeDef error_counters;
+
+    monitor->tx_fifo_capacity = hcan->Init.TxFifoQueueElmtsNbr;
+    monitor->tx_fifo_free = HAL_FDCAN_GetTxFifoFreeLevel(hcan);
+    monitor->tx_fifo_used = monitor->tx_fifo_capacity > monitor->tx_fifo_free ?
+                            monitor->tx_fifo_capacity - monitor->tx_fifo_free : 0U;
+    if (monitor->tx_fifo_free < monitor->tx_fifo_min_free)
+    {
+        monitor->tx_fifo_min_free = monitor->tx_fifo_free;
+    }
+    if (monitor->tx_fifo_capacity != 0U && monitor->tx_fifo_free == 0U)
+    {
+        monitor->tx_fifo_full_count++;
+    }
+    else
+    {
+        monitor->tx_fifo_full_count = 0U;
+    }
+
+    monitor->rx_fifo0_capacity = hcan->Init.RxFifo0ElmtsNbr;
+    if (monitor->rx_fifo0_capacity != 0U)
+    {
+        monitor->rx_fifo0_fill = HAL_FDCAN_GetRxFifoFillLevel(hcan, FDCAN_RX_FIFO0);
+        monitor->rx_fifo0_free = monitor->rx_fifo0_capacity - monitor->rx_fifo0_fill;
+        if (monitor->rx_fifo0_fill > monitor->rx_fifo0_peak_fill)
+        {
+            monitor->rx_fifo0_peak_fill = monitor->rx_fifo0_fill;
+        }
+    }
+    monitor->rx_fifo1_capacity = hcan->Init.RxFifo1ElmtsNbr;
+    if (monitor->rx_fifo1_capacity != 0U)
+    {
+        monitor->rx_fifo1_fill = HAL_FDCAN_GetRxFifoFillLevel(hcan, FDCAN_RX_FIFO1);
+        monitor->rx_fifo1_free = monitor->rx_fifo1_capacity - monitor->rx_fifo1_fill;
+        if (monitor->rx_fifo1_fill > monitor->rx_fifo1_peak_fill)
+        {
+            monitor->rx_fifo1_peak_fill = monitor->rx_fifo1_fill;
+        }
+    }
+
+    if (HAL_FDCAN_GetProtocolStatus(hcan, &protocol_status) == HAL_OK)
+    {
+        monitor->last_error_code = protocol_status.LastErrorCode;
+        monitor->data_last_error_code = protocol_status.DataLastErrorCode;
+        monitor->activity = protocol_status.Activity;
+        monitor->error_passive = protocol_status.ErrorPassive;
+        monitor->warning = protocol_status.Warning;
+        monitor->bus_off = protocol_status.BusOff;
+    }
+    if (HAL_FDCAN_GetErrorCounters(hcan, &error_counters) == HAL_OK)
+    {
+        monitor->tx_error_cnt = error_counters.TxErrorCnt;
+        monitor->rx_error_cnt = error_counters.RxErrorCnt;
+        monitor->rx_error_passive = error_counters.RxErrorPassive;
+    }
+    monitor->hal_error_code = hcan->ErrorCode;
+}
+
+static HAL_StatusTypeDef CAN_Recover(CanInstance_t *instance)
+{
+    FDCAN_HandleTypeDef *hcan = instance->can;
+
+    if (hcan->State == HAL_FDCAN_STATE_BUSY)
+    {
+        (void)HAL_FDCAN_AbortTxRequest(hcan, CAN_TX_REQUEST_ALL);
+        (void)HAL_FDCAN_Stop(hcan);
+    }
+    if (HAL_FDCAN_DeInit(hcan) != HAL_OK ||
+        HAL_FDCAN_Init(hcan) != HAL_OK ||
+        CAN_ConfigFilter(instance) != HAL_OK ||
+        HAL_FDCAN_Start(hcan) != HAL_OK)
+    {
+        return HAL_ERROR;
+    }
+    return CAN_ActivateNotifications(instance);
+}
+
+void CAN_MonitorPoll(void)
+{
+    if (can_instances == NULL)
+    {
+        return;
+    }
+
+    for (uint8_t index = 0U; index < can_instance_count; ++index)
+    {
+        CanInstance_t *instance = &can_instances[index];
+        CANTxMonitor *monitor = &instance->monitor;
+        TickType_t now;
+        uint8_t fifo_stuck;
+
+        if (instance->can == NULL || instance->tx_mutex == NULL ||
+            xSemaphoreTake(instance->tx_mutex, portMAX_DELAY) != pdTRUE)
+        {
+            continue;
+        }
+
+        CAN_MonitorRefresh(instance);
+        fifo_stuck = monitor->tx_fifo_full_count >= CAN_TX_FIFO_STUCK_POLLS &&
+                     (monitor->error_passive != 0U || monitor->warning != 0U ||
+                      monitor->tx_error_cnt >= CAN_TX_ERROR_RECOVER_THRESHOLD);
+        if (monitor->bus_off != 0U || fifo_stuck != 0U ||
+            instance->can->State != HAL_FDCAN_STATE_BUSY)
+        {
+            now = xTaskGetTickCount();
+            if (monitor->last_recover_tick == 0U ||
+                (TickType_t)(now - monitor->last_recover_tick) >= CAN_RECOVER_COOLDOWN_TICKS)
+            {
+                monitor->last_recover_tick = now;
+                monitor->tx_fifo_full_count = 0U;
+                monitor->last_recover_reason = monitor->bus_off != 0U ?
+                                               CAN_RECOVER_REASON_BUS_OFF :
+                                               (fifo_stuck != 0U ?
+                                                CAN_RECOVER_REASON_TX_STUCK :
+                                                CAN_RECOVER_REASON_NOT_RUNNING);
+                monitor->last_recover_error_code = monitor->last_error_code;
+                monitor->last_recover_hal_error_code = monitor->hal_error_code;
+                monitor->last_recover_tx_error_cnt = monitor->tx_error_cnt;
+                monitor->err_reinit++;
+                if (CAN_Recover(instance) == HAL_OK)
+                {
+                    monitor->recover_success++;
+                }
+                else
+                {
+                    monitor->recover_fail++;
+                }
+                CAN_MonitorRefresh(instance);
+            }
+        }
+        xSemaphoreGive(instance->tx_mutex);
+    }
+}
+
 uint8_t fdcanx_send_data(FDCAN_HandleTypeDef *hfdcan, uint16_t id,
                          const uint8_t *data, uint32_t len)
 {
     CanInstance_t *instance = CAN_InstanceFor(hfdcan);
+    HAL_StatusTypeDef send_status;
     if (instance != NULL && (id > CAN_STANDARD_ID_MAX || len > CAN_FRAME_DATA_MAX ||
                              (len != 0U && data == NULL))) {
         instance->monitor.tx_fail++;
@@ -154,8 +312,22 @@ uint8_t fdcanx_send_data(FDCAN_HandleTypeDef *hfdcan, uint16_t id,
     header.FDFormat = FDCAN_CLASSIC_CAN;
     header.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
 
-    if (HAL_FDCAN_AddMessageToTxFifoQ(hfdcan, &header,
-                                      (uint8_t *)(uintptr_t)data) != HAL_OK) {
+    if (instance != NULL && instance->tx_mutex != NULL)
+    {
+        if (xSemaphoreTake(instance->tx_mutex, portMAX_DELAY) != pdTRUE)
+        {
+            instance->monitor.tx_fail++;
+            instance->monitor.last_fail_id = id;
+            return 1U;
+        }
+    }
+    send_status = HAL_FDCAN_AddMessageToTxFifoQ(
+        hfdcan, &header, (uint8_t *)(uintptr_t)data);
+    if (instance != NULL && instance->tx_mutex != NULL)
+    {
+        xSemaphoreGive(instance->tx_mutex);
+    }
+    if (send_status != HAL_OK) {
         if (instance != NULL) {
             instance->monitor.tx_fail++;
             instance->monitor.last_fail_id = id;
@@ -175,11 +347,17 @@ BaseType_t CANTransmit_QueueInit(void)
     }
 
     for (uint8_t i = 0U; i < can_instance_count; ++i) {
+        if (can_instances[i].tx_mutex == NULL)
+        {
+            can_instances[i].tx_mutex = xSemaphoreCreateMutex();
+        }
         if (can_instances[i].tx_queue == NULL) {
             can_instances[i].tx_queue = xQueueCreate(CAN_TX_QUEUE_LENGTH,
                                                      sizeof(CanTxFrame_t));
         }
-        if (can_instances[i].tx_queue == NULL) {
+        if (can_instances[i].tx_mutex == NULL ||
+            can_instances[i].tx_queue == NULL)
+        {
             return pdFAIL;
         }
     }
@@ -259,6 +437,19 @@ void HAL_FDCAN_ErrorCallback(FDCAN_HandleTypeDef *hcan)
     CanInstance_t *instance = CAN_InstanceFor(hcan);
     if (instance != NULL) {
         instance->monitor.err_callback++;
+    }
+}
+
+void HAL_FDCAN_ErrorStatusCallback(FDCAN_HandleTypeDef *hcan, uint32_t flags)
+{
+    CanInstance_t *instance = CAN_InstanceFor(hcan);
+    if (instance != NULL)
+    {
+        instance->monitor.err_status_callback++;
+        if ((flags & FDCAN_IT_BUS_OFF) != 0U)
+        {
+            instance->monitor.bus_off = 1U;
+        }
     }
 }
 
