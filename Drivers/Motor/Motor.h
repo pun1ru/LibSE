@@ -78,9 +78,7 @@ struct Motor_t{
     bool inverse;                       // 反转电流或力矩命令方向
 };
 
-/* 把任意弧度角折算到 (-pi, pi] */
-float Motor_WrapAngleRad(float angle_rad);
-/* 由相对零点的单圈角度同时填写 abs_angle_rad 与 abs_angle_deg */
+/* 由相对零点的单圈角度同时填写 abs_angle_rad 与 abs_angle_deg，折算到 [-pi, pi] */
 void Motor_SetAbsAngle(Feedback_t *feedback, float angle_rad);
 
 #endif

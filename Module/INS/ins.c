@@ -40,6 +40,9 @@ void INS_Update(INS_t *ins, float dt)
     ins->euler.pitch_deg = ins->attitude.Pitch;
     ins->euler.roll_deg = ins->attitude.Roll;
     ins->euler.yaw_deg = ins->attitude.Yaw;
+    for (uint8_t i = 0U; i < 3U; ++i) {
+        ins->gyro_snapshot[i] = ins->gyro[i];
+    }
     taskEXIT_CRITICAL();
     ins->last_dt_s = dt;
     ++ins->update_count;
@@ -53,6 +56,20 @@ uint8_t INS_GetEuler(const INS_t *ins, INS_Euler_t *euler)
 
     taskENTER_CRITICAL();
     *euler = ins->euler;
+    taskEXIT_CRITICAL();
+    return 1U;
+}
+
+uint8_t INS_GetGyro(const INS_t *ins, float gyro_rads[3])
+{
+    if (ins == NULL || gyro_rads == NULL || ins->ready == 0U) {
+        return 0U;
+    }
+
+    taskENTER_CRITICAL();
+    for (uint8_t i = 0U; i < 3U; ++i) {
+        gyro_rads[i] = ins->gyro_snapshot[i];
+    }
     taskEXIT_CRITICAL();
     return 1U;
 }
