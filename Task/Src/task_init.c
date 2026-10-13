@@ -92,8 +92,7 @@ void CommunicateInit(void)
 /*--------------------------------------任务初始化--------------------------------------*/
 void InitTask(void *argument)
 {
-    (void)argument;
-
+    taskENTER_CRITICAL();
     DWT_Init(TASK_CPU_FREQUENCY_MHZ);
     Monitor_Init();
     CommunicateInit();
@@ -108,6 +107,6 @@ void InitTask(void *argument)
                 TASK_TRANSMIT_PRIORITY, &TransmitTaskHandle);
     xTaskCreate(INS_Task, "INSTask", TASK_INS_STACK_SIZE, NULL,
                 TASK_INS_PRIORITY, &INSTaskHandle);
-
+    taskEXIT_CRITICAL();
     vTaskDelete(NULL);
 }

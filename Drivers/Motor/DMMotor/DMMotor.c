@@ -3,9 +3,6 @@
 #include <stddef.h>
 #include <string.h>
 
-#define DM_ENCODER_COUNTS 65536U
-#define DM_TWO_PI 6.283185307179586f
-
 //uint16_t与float之间的映射函数
 static uint16_t DMMotor_Encode(float value, float min, float max, uint8_t bits)
 {
@@ -79,14 +76,19 @@ void DMMotor_Feedback(DMMotor_t *motor, const uint8_t data[8],uint16_t rec_id)
     uint16_t velocity_raw = ((uint16_t)data[3] << 4) | (data[4] >> 4);
     uint16_t torque_raw = ((uint16_t)(data[4] & 0x0FU) << 8) | data[5];
     feedback->encoder = position_raw;
-    feedback->abs_angle = (float)(uint16_t)(position_raw - motor->base.zero_point) *
-                          DM_TWO_PI / (float)DM_ENCODER_COUNTS;
-    feedback->velocity = DMMotor_Decode(velocity_raw, limits->v_min,
-                                        limits->v_max, 12U);
-    feedback->omega = feedback->velocity;
-    feedback->torque = DMMotor_Decode(torque_raw, limits->t_min,
-                                      limits->t_max, 12U);
-    feedback->temp = (float)data[7];
+    /* POS 按 [P_MIN, P_MAX] 线性映射为 rad，zero_point 是同一映射下的原始值 */
+    float position_rad = DMMotor_Decode(position_raw, limits->p_min,
+                                        limits->p_max, 16U) -
+                         DMMotor_Decode(motor->base.zero_point, limits->p_min,
+                                        limits->p_max, 16U);
+    feedback->multi_angle_rad = position_rad;
+    Motor_SetAbsAngle(feedback, position_rad);
+    feedback->omega_rads = DMMotor_Decode(velocity_raw, limits->v_min,
+                                          limits->v_max, 12U);
+    feedback->velocity_rpm = feedback->omega_rads * MOTOR_RADS_TO_RPM;
+    feedback->torque_nm = DMMotor_Decode(torque_raw, limits->t_min,
+                                         limits->t_max, 12U);
+    feedback->temp = (float)data[7];   /* T_Rotor 线圈温度 */
     uint8_t status_code = data[0] >> 4;
     feedback->error_id = status_code > 1U ? status_code : 0U;
     switch (feedback->error_id) {

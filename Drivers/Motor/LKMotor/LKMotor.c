@@ -14,9 +14,7 @@
 #define LK_CMD_SPEED_CONTROL       0xA2U
 #define LK_CMD_POSITION_CONTROL    0xA3U
 #define LK_CMD_POSITION_LIMITED    0xA4U
-#define LK_PI                      3.141592653589793f
-#define LK_DEGREES_PER_REVOLUTION  360.0f
-#define LK_RAD_PER_DEGREE          (LK_PI / 180.0f)
+#define LK_DPS_TO_RPM              (60.0f / 360.0f)
 #define LK_ERROR_UNDERVOLTAGE      (1U << 0U)
 #define LK_ERROR_OVERVOLTAGE       (1U << 1U)
 #define LK_ERROR_MOS_OVERTEMP      (1U << 2U)
@@ -24,7 +22,11 @@
 #define LK_ERROR_OVERCURRENT       (1U << 4U)
 #define LK_ERROR_COMM_LOST         (1U << 7U)
 #define LK_MOTOR_OFF_STATE         0x10U
-#define LK_TWO_PI                  (LK_DEGREES_PER_REVOLUTION * LK_RAD_PER_DEGREE)
+
+static float LKMotor_CurrentPerLsb(LKMotorType_t model_type)
+{
+    return model_type == LK_MG ? LK_MG_CURRENT_PER_LSB : LK_MF_CURRENT_PER_LSB;
+}
 
 static uint16_t LKMotor_ReadU16(const uint8_t *data)
 {
@@ -136,24 +138,17 @@ void LKMotor_SendCommand(LKMotor_t *motor)
         data[5] = (uint8_t)((uint32_t)setpoint >> 8);
         break;
     case MODE_VELOCITY:
-        setpoint = (int32_t)(command->velocity * LK_SPEED_COMMAND_SCALE /
-                             LK_RAD_PER_DEGREE);
+        /* velocity: rad/s -> 0.01 dps/LSB */
+        setpoint = (int32_t)(command->velocity * MOTOR_RAD_TO_DEG *
+                             LK_SPEED_COMMAND_SCALE);
         data[0] = LK_CMD_SPEED_CONTROL;
         LKMotor_WriteU32(&data[4], (uint32_t)setpoint);
         break;
     case MODE_POSITION:
-        setpoint = (int32_t)(command->position /
-                             (LK_ANGLE_DEGREE_PER_LSB * LK_RAD_PER_DEGREE));
-        if (motor->motor_config.max_speed_dps != 0U)
-        {
-            data[0] = LK_CMD_POSITION_LIMITED;
-            data[2] = (uint8_t)motor->motor_config.max_speed_dps;
-            data[3] = (uint8_t)(motor->motor_config.max_speed_dps >> 8);
-        }
-        else
-        {
-            data[0] = LK_CMD_POSITION_CONTROL;
-        }
+        /* position: rad -> 0.01 deg/LSB，最大速度由上位机 Max Speed 限制 */
+        setpoint = (int32_t)(command->position * MOTOR_RAD_TO_DEG /
+                             LK_ANGLE_DEGREE_PER_LSB);
+        data[0] = LK_CMD_POSITION_CONTROL;
         LKMotor_WriteU32(&data[4], (uint32_t)setpoint);
         break;
     default:
@@ -226,13 +221,16 @@ void LKMotor_Feedback(LKMotor_t *motor, const uint8_t data[8], uint16_t rec_id)
         int16_t iq = (int16_t)LKMotor_ReadU16(&data[2]);
         int16_t speed = (int16_t)LKMotor_ReadU16(&data[4]);
         uint16_t encoder = LKMotor_ReadU16(&data[6]);
-        feedback->current = (float)iq * motor->motor_config.current_per_lsb;
-        feedback->velocity = (float)speed * LK_SPEED_DPS_PER_LSB *
-                             LK_RAD_PER_DEGREE;
-        feedback->omega = feedback->velocity;
+        float speed_dps = (float)speed * LK_SPEED_DPS_PER_LSB;
+        feedback->current = (float)iq *
+                            LKMotor_CurrentPerLsb(motor->motor_config.model_type);
+        feedback->velocity_rpm = speed_dps * LK_DPS_TO_RPM;
+        feedback->omega_rads = speed_dps * MOTOR_DEG_TO_RAD;
         feedback->encoder = encoder;
-        feedback->abs_angle = (float)(uint16_t)(encoder - motor->base.zero_point) *
-                              LK_TWO_PI / (float)LK_ENCODER_COUNTS;
+        /* 16 位差值按有符号解释即落在 [-32768, 32767] */
+        Motor_SetAbsAngle(feedback,
+                          (float)(int16_t)(uint16_t)(encoder - motor->base.zero_point) *
+                          MOTOR_TWO_PI / (float)LK_ENCODER_COUNTS);
         feedback->temp = (float)(int8_t)data[1];
         if (feedback->status == MOTOR_NO_FEEDBACK)
         {
@@ -251,27 +249,18 @@ void LKMotor_Feedback(LKMotor_t *motor, const uint8_t data[8], uint16_t rec_id)
         {
             raw |= 0xFF00000000000000ULL;
         }
-        feedback->multi_angle = (float)(int64_t)raw *
-                                LK_ANGLE_DEGREE_PER_LSB * LK_RAD_PER_DEGREE;
+        feedback->multi_angle_rad = (float)(int64_t)raw *
+                                    LK_ANGLE_DEGREE_PER_LSB * MOTOR_DEG_TO_RAD;
         break;
     }
     case LK_CMD_READ_SINGLE_ANGLE:
     {
         uint32_t angle = (uint32_t)data[4] | ((uint32_t)data[5] << 8) |
                          ((uint32_t)data[6] << 16) | ((uint32_t)data[7] << 24);
-        float relative_angle = (float)angle * LK_ANGLE_DEGREE_PER_LSB *
-                               LK_RAD_PER_DEGREE -
-                               (float)motor->base.zero_point * LK_TWO_PI /
-                               (float)LK_ENCODER_COUNTS;
-        if (relative_angle < 0.0f)
-        {
-            relative_angle += LK_TWO_PI;
-        }
-        else if (relative_angle >= LK_TWO_PI)
-        {
-            relative_angle -= LK_TWO_PI;
-        }
-        feedback->abs_angle = relative_angle;
+        Motor_SetAbsAngle(feedback,
+                          (float)angle * LK_ANGLE_DEGREE_PER_LSB * MOTOR_DEG_TO_RAD -
+                          (float)motor->base.zero_point * MOTOR_TWO_PI /
+                          (float)LK_ENCODER_COUNTS);
         break;
     }
     default:

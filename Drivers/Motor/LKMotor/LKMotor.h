@@ -16,12 +16,16 @@
 #define LK_SPEED_DPS_PER_LSB       1.0f
 #define LK_SPEED_COMMAND_SCALE     100.0f
 
+typedef enum {
+    LK_MF,      ///< MF 系列，iq 33/4096 A/LSB
+    LK_MG       ///< MG 系列，iq 66/4096 A/LSB
+} LKMotorType_t;
+
 typedef struct {
+    LKMotorType_t model_type;
     FDCAN_HandleTypeDef *can;
     uint8_t motor_id;
     uint16_t feedback_id;
-    uint16_t max_speed_dps;
-    float current_per_lsb;
     uint16_t zero_point;
     bool inverse;
 } LKMotorConfig_t;

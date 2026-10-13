@@ -5,8 +5,6 @@
 
 #define RM_ENCODER_COUNTS 8192
 #define RM_HALF_ENCODER_COUNTS (RM_ENCODER_COUNTS / 2)
-#define RM_TWO_PI 6.283185307179586f
-#define RM_SECONDS_PER_MINUTE 60.0f
 
 static uint8_t RMMotor_Slot(uint8_t motor_id)
 {
@@ -133,18 +131,27 @@ void RMMotor_Feedback(RMMotor_t *motor, const uint8_t data[8], uint16_t rec_id)
     Feedback_t *feedback = &motor->base.feedback;
     feedback->timestamp++;
     feedback->encoder = encoder;
-    feedback->abs_angle = (float)zeroed_encoder * RM_TWO_PI / RM_ENCODER_COUNTS;
-    feedback->multi_angle = ((float)motor->rounds +
-                             (float)encoder / RM_ENCODER_COUNTS) * RM_TWO_PI;
-    feedback->velocity = (float)speed_rpm * RM_TWO_PI / RM_SECONDS_PER_MINUTE;
-    feedback->omega = feedback->velocity;
-    if (motor->motor_config.motor_type == RM_C620) {
+    Motor_SetAbsAngle(feedback, (float)zeroed_encoder * MOTOR_TWO_PI /
+                                RM_ENCODER_COUNTS);
+    feedback->multi_angle_rad = ((float)motor->rounds +
+                                 (float)encoder / RM_ENCODER_COUNTS) * MOTOR_TWO_PI;
+    /* 反馈的是转子转速（减速箱前） */
+    feedback->velocity_rpm = (float)speed_rpm;
+    feedback->omega_rads = (float)speed_rpm * MOTOR_RPM_TO_RADS;
+    switch (motor->motor_config.motor_type) {
+    case RM_C610:
+        feedback->current = (float)current_raw * RM_C610_CURRENT_PER_LSB;
+        break;
+    case RM_C620:
         feedback->current = (float)current_raw * RM_C620_CURRENT_PER_LSB;
-    }
-    if (motor->motor_config.motor_type == RM_C620) {
         feedback->temp = (float)data[6];
-    } else if (motor->motor_config.motor_type == RM_GM6020) {
-        feedback->temp = (float)data[7];
+        break;
+    case RM_GM6020:
+        feedback->current = (float)current_raw * RM_GM6020_CURRENT_PER_LSB;
+        feedback->temp = (float)data[6];
+        break;
+    default:
+        break;
     }
     feedback->error_id = 0U;
     feedback->status = MOTOR_ENABLED;

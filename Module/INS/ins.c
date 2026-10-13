@@ -3,7 +3,7 @@
 
 #include <stddef.h>
 #include <string.h>
-
+//温控还没上
 void INS_Init(INS_t *ins, float beta)
 {
     if (ins == NULL) {

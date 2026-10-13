@@ -36,16 +36,24 @@ typedef struct {
     float kd;
 } MotorCmd_t;
 
+#define MOTOR_PI              3.141592653589793f
+#define MOTOR_TWO_PI          (2.0f * MOTOR_PI)
+#define MOTOR_RAD_TO_DEG      (180.0f / MOTOR_PI)
+#define MOTOR_DEG_TO_RAD      (MOTOR_PI / 180.0f)
+#define MOTOR_RADS_TO_RPM     (60.0f / MOTOR_TWO_PI)
+#define MOTOR_RPM_TO_RADS     (MOTOR_TWO_PI / 60.0f)
+
 typedef struct {
     uint32_t timestamp;                  ///< Feedback function call count
     uint8_t error_id;                    ///< 电机错误码 Motor error code
     MotorStatus_t status;                ///< 电机状态 Motor status
     uint16_t encoder;                   // 电机反馈的原始编码器值
-    float abs_angle;  ///< 归一化到单圈的角度 Single-turn angle
-    float multi_angle; ///< 多圈角度 Multi-turn angle
-    float velocity;                      ///< 转速 Speed
-    float omega;                         ///< 角速度 Angular velocity
-    float torque;                        ///< 扭矩 Torque
+    float abs_angle_rad;  ///< 相对零点的单圈角度 (-pi, pi] rad
+    float abs_angle_deg;  ///< 相对零点的单圈角度 (-180, 180] deg
+    float multi_angle_rad; ///< 多圈角度 Multi-turn angle, rad
+    float velocity_rpm;                  ///< 转速 Speed, rpm
+    float omega_rads;                    ///< 角速度 Angular velocity, rad/s
+    float torque_nm;                     ///< 扭矩 Torque, N*m
     float temp;                          ///< 温度 Temperature
     float current;                       // Motor current in amperes
 } Feedback_t;
@@ -69,5 +77,10 @@ struct Motor_t{
     uint16_t zero_point;                // 人为标定的原始编码器零点
     bool inverse;                       // 反转电流或力矩命令方向
 };
+
+/* 把任意弧度角折算到 (-pi, pi] */
+float Motor_WrapAngleRad(float angle_rad);
+/* 由相对零点的单圈角度同时填写 abs_angle_rad 与 abs_angle_deg */
+void Motor_SetAbsAngle(Feedback_t *feedback, float angle_rad);
 
 #endif

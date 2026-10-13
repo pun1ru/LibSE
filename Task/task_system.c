@@ -48,11 +48,10 @@ void TaskSystem_InitMotors(void)
         1U, 2U, 3U, 5U, 6U, 7U
     };
     LKMotorConfig_t pitch_config = {
+        .model_type = LK_MF,
         .can = &hfdcan1,
         .motor_id = TASK_PITCH_MOTOR_ID,
         .feedback_id = LK_CAN_COMMAND_ID_BASE + TASK_PITCH_MOTOR_ID,
-        .max_speed_dps = 0U,
-        .current_per_lsb = LK_MF_CURRENT_PER_LSB,
         .zero_point = 0U,
         .inverse = false
     };
