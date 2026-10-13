@@ -1,5 +1,7 @@
 #include "ins.h"
 #include "bmi088_driver.h"
+#include "FreeRTOS.h"
+#include "task.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -34,6 +36,23 @@ void INS_Update(INS_t *ins, float dt)
     MadgwickAHRS_Update(&ins->attitude, ins->gyro[0], ins->gyro[1],
                         ins->gyro[2], ins->accel[0], ins->accel[1],
                         ins->accel[2], dt);
+    taskENTER_CRITICAL();
+    ins->euler.pitch_deg = ins->attitude.Pitch;
+    ins->euler.roll_deg = ins->attitude.Roll;
+    ins->euler.yaw_deg = ins->attitude.Yaw;
+    taskEXIT_CRITICAL();
     ins->last_dt_s = dt;
     ++ins->update_count;
+}
+
+uint8_t INS_GetEuler(const INS_t *ins, INS_Euler_t *euler)
+{
+    if (ins == NULL || euler == NULL || ins->ready == 0U) {
+        return 0U;
+    }
+
+    taskENTER_CRITICAL();
+    *euler = ins->euler;
+    taskEXIT_CRITICAL();
+    return 1U;
 }

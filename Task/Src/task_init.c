@@ -96,7 +96,6 @@ void InitTask(void *argument)
     DWT_Init(TASK_CPU_FREQUENCY_MHZ);
     Monitor_Init();
     CommunicateInit();
-    TaskSystem_InitMotors();
     WS2812_SPI_Init(&hspi6);
     Buzzer_BeepOnce();
     xTaskCreate(MonitorTask, "MonitorTask", TASK_MONITOR_STACK_SIZE, NULL,

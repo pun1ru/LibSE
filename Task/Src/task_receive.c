@@ -47,7 +47,7 @@ static void TaskReceive_DispatchMotorFeedback(const TaskMotorBinding_t *bindings
     for (uint8_t index = 0U; index < binding_count; ++index)
     {
         const TaskMotorBinding_t *binding = &bindings[index];
-        if (id == binding->feedback_id)
+        if (binding->motor != NULL && id == binding->feedback_id)
         {
             binding->motor->motorops.getfeedback(binding->motor, data, id);
             break;

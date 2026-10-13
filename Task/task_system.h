@@ -10,9 +10,8 @@
 #include "Motor.h"
 
 #define TASK_CAN_INSTANCE_COUNT       3U
-#define TASK_FRIC_MOTOR_COUNT          6U
 #define TASK_CAN1_MOTOR_BINDING_COUNT  1U
-#define TASK_CAN2_MOTOR_BINDING_COUNT  TASK_FRIC_MOTOR_COUNT
+#define TASK_CAN2_MOTOR_BINDING_COUNT  1U
 #define TASK_CAN3_MOTOR_BINDING_COUNT  1U
 #define TASK_UART_INSTANCE_COUNT      6U
 
@@ -57,14 +56,8 @@ extern TaskHandle_t TransmitTaskHandle;
 extern TaskHandle_t INSTaskHandle;
 
 extern INS_t board_ins;
-extern Motor_t *pitchMotor;
-extern Motor_t *fricMotors[TASK_FRIC_MOTOR_COUNT];
-extern Motor_t *yawMotor;
 extern TaskMotorBinding_t can1MotorBindings[TASK_CAN1_MOTOR_BINDING_COUNT];
 extern TaskMotorBinding_t can2MotorBindings[TASK_CAN2_MOTOR_BINDING_COUNT];
 extern TaskMotorBinding_t can3MotorBindings[TASK_CAN3_MOTOR_BINDING_COUNT];
-
-void TaskSystem_InitMotors(void);
-
 
 #endif
