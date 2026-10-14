@@ -80,9 +80,8 @@ void RMMotor_Init(RMMotor_t *motor, RMMotorGroup_t *group,
     memset(motor, 0, sizeof(*motor));
     motor->motor_config = *config;
     motor->group = group;
-    motor->base.zero_point = config->zero_point;
-    motor->base.inverse = config->inverse;
-    motor->base.feedback.status = MOTOR_NO_FEEDBACK;
+    /* 同组电机共用一帧，base.can 跟随所属 group */
+    Motor_BaseInit(&motor->base, group->can, config->zero_point, config->inverse);
     motor->base.motorops.disable = RMMotor_Disable;
     motor->base.motorops.protect = RMMotor_Disable;
     motor->base.motorops.sendcommand = RMMotor_SendFromBase;

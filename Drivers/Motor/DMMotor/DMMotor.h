@@ -28,7 +28,6 @@ typedef enum{
 }MotorType_t;
 typedef struct {
     MotorType_t motor_type;
-    FDCAN_HandleTypeDef *can;
     uint16_t motor_id;
     uint16_t feedback_id;
     uint16_t zero_point;
@@ -41,7 +40,8 @@ typedef struct {
     MotorConfig_t motor_config;
 } DMMotor_t;
 
-void DMMotor_Init(DMMotor_t *motor, const MotorConfig_t *config);
+void DMMotor_Init(DMMotor_t *motor, FDCAN_HandleTypeDef *can,
+                  const MotorConfig_t *config);
 void DMMotor_SendCommand(DMMotor_t *motor);
 void DMMotor_Feedback(DMMotor_t *motor, const uint8_t data[8], uint16_t rec_id);
 

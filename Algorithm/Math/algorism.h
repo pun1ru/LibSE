@@ -36,6 +36,39 @@ typedef struct
     uint8_t init;   /**< 首次初始化标志 */
 }ScalarKalmanFilter;
 
+/**
+ * \brief 分频器：主循环每周期 Tick 一次，每 div 次返回 1
+ * 
+ * \note  Reset 后的下一次 Tick 立即触发，保证外环先于内环给出参考
+ */
+typedef struct
+{
+    uint16_t div;
+    uint16_t count;
+}RateDivider;
+
+static inline void RateDividerInit(RateDivider* divider, uint16_t div)
+{
+    divider->div = div == 0U ? 1U : div;
+    divider->count = 0U;
+}
+
+static inline void RateDividerReset(RateDivider* divider)
+{
+    divider->count = 0U;
+}
+
+static inline uint8_t RateDividerTick(RateDivider* divider)
+{
+    if (divider->count == 0U)
+    {
+        divider->count = divider->div - 1U;
+        return 1U;
+    }
+    divider->count--;
+    return 0U;
+}
+
 typedef struct
 {
 	float x[30];

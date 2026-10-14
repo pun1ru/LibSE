@@ -23,7 +23,6 @@ typedef enum {
 
 typedef struct {
     LKMotorType_t model_type;
-    FDCAN_HandleTypeDef *can;
     uint8_t motor_id;
     uint16_t feedback_id;
     uint16_t zero_point;
@@ -35,7 +34,8 @@ typedef struct {
     LKMotorConfig_t motor_config;
 } LKMotor_t;
 
-void LKMotor_Init(LKMotor_t *motor, const LKMotorConfig_t *config);
+void LKMotor_Init(LKMotor_t *motor, FDCAN_HandleTypeDef *can,
+                  const LKMotorConfig_t *config);
 void LKMotor_Feedback(LKMotor_t *motor, const uint8_t data[8], uint16_t rec_id);
 void LKMotor_SendCommand(LKMotor_t *motor);
 void LKMotor_RequestFeedback(LKMotor_t *motor);

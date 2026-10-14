@@ -56,7 +56,7 @@ static float LKMotor_Limit(float value, float limit)
 
 static void LKMotor_SendFrame(LKMotor_t *motor, const uint8_t data[8])
 {
-    (void)CANTransmit_Enqueue(motor->motor_config.can,
+    (void)CANTransmit_Enqueue(motor->base.can,
                               (uint16_t)(LK_CAN_COMMAND_ID_BASE + motor->motor_config.motor_id),
                               data);
 }
@@ -105,13 +105,12 @@ static void LKMotor_FeedbackFromBase(Motor_t *base, const uint8_t *data,
     LKMotor_Feedback((LKMotor_t *)base, data, rec_id);
 }
 
-void LKMotor_Init(LKMotor_t *motor, const LKMotorConfig_t *config)
+void LKMotor_Init(LKMotor_t *motor, FDCAN_HandleTypeDef *can,
+                  const LKMotorConfig_t *config)
 {
     memset(motor, 0, sizeof(*motor));
     motor->motor_config = *config;
-    motor->base.zero_point = config->zero_point;
-    motor->base.inverse = config->inverse;
-    motor->base.feedback.status = MOTOR_NO_FEEDBACK;
+    Motor_BaseInit(&motor->base, can, config->zero_point, config->inverse);
     motor->base.motorops.enable = LKMotor_Enable;
     motor->base.motorops.disable = LKMotor_Disable;
     motor->base.motorops.protect = LKMotor_Protect;

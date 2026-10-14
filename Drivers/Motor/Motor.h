@@ -4,6 +4,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "fdcan.h"
+
 typedef enum {      //电机控制模式 Control mode
     MODE_POSITION,  ///< 位置控制模式 Position control mode
     MODE_VELOCITY,  ///< 速度控制模式 Velocity control mode
@@ -74,9 +76,14 @@ struct Motor_t{
     Feedback_t feedback;
     MotorCmd_t motorcmd;
     MotorOps_t motorops;
+    FDCAN_HandleTypeDef *can;           // 电机所在 CAN 总线
     uint16_t zero_point;                // 人为标定的原始编码器零点
     bool inverse;                       // 反转电流或力矩命令方向
 };
+
+/* 基类构造：子类 Init 在 memset 之后调用，再填写各自的 motorops */
+void Motor_BaseInit(Motor_t *motor, FDCAN_HandleTypeDef *can,
+                    uint16_t zero_point, bool inverse);
 
 /* 由相对零点的单圈角度同时填写 abs_angle_rad 与 abs_angle_deg，折算到 [-pi, pi] */
 void Motor_SetAbsAngle(Feedback_t *feedback, float angle_rad);

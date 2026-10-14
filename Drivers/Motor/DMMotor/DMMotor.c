@@ -24,7 +24,7 @@ static float DMMotor_Decode(uint16_t value, float min, float max, uint8_t bits)
 
 static void DMMotor_SendFrame(DMMotor_t *motor, uint16_t id, const uint8_t data[8])
 {
-    (void)CANTransmit_Enqueue(motor->motor_config.can, id, data);
+    (void)CANTransmit_Enqueue(motor->base.can, id, data);
 }
 
 static void DMMotor_SendEnable(Motor_t *base)
@@ -122,7 +122,8 @@ void DMMotor_Feedback(DMMotor_t *motor, const uint8_t data[8],uint16_t rec_id)
     }
 }
 
-void DMMotor_Init(DMMotor_t *motor, const MotorConfig_t *config)
+void DMMotor_Init(DMMotor_t *motor, FDCAN_HandleTypeDef *can,
+                  const MotorConfig_t *config)
 {
     MotorConfig_t saved_config = *config;
     switch (saved_config.motor_type) {
@@ -156,9 +157,7 @@ void DMMotor_Init(DMMotor_t *motor, const MotorConfig_t *config)
 
     memset(motor, 0, sizeof(*motor));
     motor->motor_config = saved_config;
-    motor->base.zero_point = config->zero_point;
-    motor->base.inverse = config->inverse;
-    motor->base.feedback.status = MOTOR_NO_FEEDBACK;
+    Motor_BaseInit(&motor->base, can, config->zero_point, config->inverse);
     motor->base.motorops.enable = DMMotor_SendEnable;
     motor->base.motorops.disable = DMMotor_SendDisable;
     motor->base.motorops.protect = DMMotor_SendDisable;

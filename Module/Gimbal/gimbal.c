@@ -6,6 +6,22 @@
 
 #define GIMBAL_COS_PITCH_MIN    0.05f   /* 防止 pitch 接近 ±90° 时 1/cos 发散 */
 
+/* 清空控制器状态并让角度环下个周期立即执行；输出由 Gimbal_Control 末尾统一下发 */
+static void Gimbal_ResetControl(Gimbal_t *gimbal)
+{
+    for (uint8_t i = 0U; i < GIMBAL_AXIS_COUNT; ++i)
+    {
+        GimbalAxisCtrl_t *ctrl = &gimbal->controller.axis[i];
+        PIDReset(&ctrl->angle_pid);
+        PIDReset(&ctrl->speed_pid);
+        ctrl->angle_out_dps = 0.0f;
+        ctrl->speed_ref_dps = 0.0f;
+        ctrl->feedforward = 0.0f;
+        ctrl->output = 0.0f;
+    }
+    RateDividerReset(&gimbal->controller.angle_loop);
+}
+
 static void Gimbal_LoadGain(Gimbal_t *gimbal, const GimbalGainSet_t *gain)
 {
     for (uint8_t i = 0U; i < GIMBAL_AXIS_COUNT; ++i)
@@ -18,16 +34,12 @@ static void Gimbal_LoadGain(Gimbal_t *gimbal, const GimbalGainSet_t *gain)
         PIDInitialize(&ctrl->speed_pid, param->speed.kp, param->speed.ki,
                       param->speed.kd, param->speed.sum_error_max,
                       param->speed.output_max);
-        PIDReset(&ctrl->angle_pid);
-        PIDReset(&ctrl->speed_pid);
-        ctrl->speed_ref_rads = 0.0f;
-        ctrl->feedforward = 0.0f;
-        ctrl->output = 0.0f;
     }
+    Gimbal_ResetControl(gimbal);
 }
 
 /* 按电机当前控制模式把输出写到对应字段 */
-static void Gimbal_ApplyOutput(Motor_t *motor, float output)
+static void Gimbal_WriteCommand(Motor_t *motor, float output)
 {
     if (motor == NULL)
     {
@@ -54,18 +66,20 @@ static void Gimbal_ApplyOutput(Motor_t *motor, float output)
         break;
     }
 }
-
-static void Gimbal_ZeroOutput(Gimbal_t *gimbal)
+/* 先写完所有轴再统一发送：同组 RM 电机共用一帧，逐个写+发会带出旧值 */
+static void Gimbal_ApplyOutput(Gimbal_t *gimbal)
 {
     for (uint8_t i = 0U; i < GIMBAL_AXIS_COUNT; ++i)
     {
-        GimbalAxisCtrl_t *ctrl = &gimbal->controller.axis[i];
-        PIDReset(&ctrl->angle_pid);
-        PIDReset(&ctrl->speed_pid);
-        ctrl->speed_ref_rads = 0.0f;
-        ctrl->feedforward = 0.0f;
-        ctrl->output = 0.0f;
-        Gimbal_ApplyOutput(gimbal->motor[i], 0.0f);
+        Gimbal_WriteCommand(gimbal->motor[i], gimbal->controller.axis[i].output);
+    }
+    for (uint8_t i = 0U; i < GIMBAL_AXIS_COUNT; ++i)
+    {
+        Motor_t *motor = gimbal->motor[i];
+        if (motor != NULL)
+        {
+            motor->motorops.sendcommand(motor);
+        }
     }
 }
 
@@ -83,11 +97,12 @@ void Gimbal_Init(Gimbal_t *gimbal, const GimbalConfig_t *config)
     gimbal->normal_gain = config->normal_gain;
     gimbal->sniper_gain = config->sniper_gain;
     gimbal->ins = config->ins;
-    gimbal->pitch_min_rad = config->pitch_min_rad;
-    gimbal->pitch_max_rad = config->pitch_max_rad;
+    gimbal->pitch_min_deg = config->pitch_min_deg;
+    gimbal->pitch_max_deg = config->pitch_max_deg;
     gimbal->state = config->init_state;
     SmoothFilterInitialize(&gimbal->observer.pitch_alpha_filter, config->alpha_filter);
     SmoothFilterInitialize(&gimbal->observer.yaw_alpha_filter, config->alpha_filter);
+    RateDividerInit(&gimbal->controller.angle_loop, config->angle_loop_div);
     Gimbal_LoadGain(gimbal, gimbal->state == GIMBAL_SNIPER ?
                             &gimbal->sniper_gain : &gimbal->normal_gain);
 }
@@ -105,7 +120,7 @@ void Gimbal_Input(Gimbal_t *gimbal, const GimbalInput_t *input)
         gimbal->state = input->state;
         if (input->state == GIMBAL_PROTECTED)
         {
-            Gimbal_ZeroOutput(gimbal);
+            Gimbal_ResetControl(gimbal);
         }
         else
         {
@@ -119,22 +134,17 @@ void Gimbal_Input(Gimbal_t *gimbal, const GimbalInput_t *input)
     {
         return;
     }
-    gimbal->target.pitch_rad = DoubleEdgeLimiter(input->pitch_rad,
-                                                 gimbal->pitch_min_rad,
-                                                 gimbal->pitch_max_rad);
-    gimbal->target.yaw_rad = AngleLimit(input->yaw_rad, -MOTOR_PI, MOTOR_PI);
-    gimbal->target.pitch_omega_rads = input->pitch_omega_rads;
-    gimbal->target.yaw_omega_rads = input->yaw_omega_rads;
+    gimbal->target.pitch_deg = DoubleEdgeLimiter(input->pitch_deg,
+                                                 gimbal->pitch_min_deg,
+                                                 gimbal->pitch_max_deg);
+    gimbal->target.yaw_deg = AngleLimit(input->yaw_deg, -180.0f, 180.0f);
+    gimbal->target.pitch_omega_dps = input->pitch_omega_dps;
+    gimbal->target.yaw_omega_dps = input->yaw_omega_dps;
 }
 
 /*--------------------------------------估计层--------------------------------------*/
 void Gimbal_Estimate(Gimbal_t *gimbal, float dt_s)
 {
-    if (gimbal == NULL)
-    {
-        return;
-    }
-
     GimbalObserver_t *obs = &gimbal->observer;
     INS_Euler_t euler;
     float gyro[3];
@@ -146,62 +156,62 @@ void Gimbal_Estimate(Gimbal_t *gimbal, float dt_s)
         return;
     }
 
-    obs->roll_rad = euler.roll_deg * MOTOR_DEG_TO_RAD;
-    obs->pitch_rad = euler.pitch_deg * MOTOR_DEG_TO_RAD;
-    obs->yaw_rad = euler.yaw_deg * MOTOR_DEG_TO_RAD;
+    obs->roll_deg = euler.roll_deg;
+    obs->pitch_deg = euler.pitch_deg;
+    obs->yaw_deg = euler.yaw_deg;
 
-    /* ZYX 欧拉角速率：机体角速度 -> d(pitch)/dt, d(yaw)/dt */
-    float sin_roll = sinf(obs->roll_rad);
-    float cos_roll = cosf(obs->roll_rad);
-    float cos_pitch = cosf(obs->pitch_rad);
+    /* ZYX 欧拉角速率：机体角速度 -> d(pitch)/dt, d(yaw)/dt
+     * 三角函数用 rad，陀螺仪为 rad/s，结果转 deg/s */
+    float roll_rad = obs->roll_deg * MOTOR_DEG_TO_RAD;
+    float sin_roll = sinf(roll_rad);
+    float cos_roll = cosf(roll_rad);
+    float cos_pitch = cosf(obs->pitch_deg * MOTOR_DEG_TO_RAD);
     if (fabsf(cos_pitch) < GIMBAL_COS_PITCH_MIN)
     {
         cos_pitch = cos_pitch < 0.0f ? -GIMBAL_COS_PITCH_MIN : GIMBAL_COS_PITCH_MIN;
     }
-    float pitch_omega = cos_roll * gyro[1] - sin_roll * gyro[2];
-    float yaw_omega = (sin_roll * gyro[1] + cos_roll * gyro[2]) / cos_pitch;
+    float pitch_omega = (cos_roll * gyro[1] - sin_roll * gyro[2]) * MOTOR_RAD_TO_DEG;
+    float yaw_omega = (sin_roll * gyro[1] + cos_roll * gyro[2]) / cos_pitch *
+                      MOTOR_RAD_TO_DEG;
 
     if (obs->valid != 0U && dt_s > 0.0f)
     {
-        obs->pitch_alpha_rads2 = SmoothFilterUpdate(&obs->pitch_alpha_filter,
-                                                    (pitch_omega - obs->pitch_omega_rads) / dt_s);
-        obs->yaw_alpha_rads2 = SmoothFilterUpdate(&obs->yaw_alpha_filter,
-                                                  (yaw_omega - obs->yaw_omega_rads) / dt_s);
+        obs->pitch_alpha_dps2 = SmoothFilterUpdate(&obs->pitch_alpha_filter,
+                                                    (pitch_omega - obs->pitch_omega_dps) / dt_s);
+        obs->yaw_alpha_dps2 = SmoothFilterUpdate(&obs->yaw_alpha_filter,
+                                                  (yaw_omega - obs->yaw_omega_dps) / dt_s);
     }
     else
     {
         SmoothFilterInitialize(&obs->pitch_alpha_filter, obs->pitch_alpha_filter.alpha);
         SmoothFilterInitialize(&obs->yaw_alpha_filter, obs->yaw_alpha_filter.alpha);
-        obs->pitch_alpha_rads2 = 0.0f;
-        obs->yaw_alpha_rads2 = 0.0f;
+        obs->pitch_alpha_dps2 = 0.0f;
+        obs->yaw_alpha_dps2 = 0.0f;
     }
-    obs->pitch_omega_rads = pitch_omega;
-    obs->yaw_omega_rads = yaw_omega;
-
-    if (gimbal->motor[GIMBAL_YAW] != NULL)
-    {
-        obs->yaw_motor_angle_rad = gimbal->motor[GIMBAL_YAW]->feedback.abs_angle_rad;
-    }
-    if (gimbal->motor[GIMBAL_PITCH] != NULL)
-    {
-        obs->pitch_motor_angle_rad = gimbal->motor[GIMBAL_PITCH]->feedback.abs_angle_rad;
-    }
+    obs->pitch_omega_dps = pitch_omega;
+    obs->yaw_omega_dps = yaw_omega;
+    obs->yaw_motor_angle_deg = gimbal->motor[GIMBAL_YAW]->feedback.abs_angle_deg;
+    obs->pitch_motor_angle_deg = gimbal->motor[GIMBAL_PITCH]->feedback.abs_angle_deg;
     obs->valid = 1U;
 }
 
 /*--------------------------------------控制层--------------------------------------*/
-/* 角度环 -> 速度参考（加目标角速度前馈）-> 速度环 + 模型前馈 */
-static float Gimbal_AxisControl(GimbalAxisCtrl_t *ctrl, float angle_error_rad,
-                                float target_omega_rads, float omega_rads)
+/* 外环（分频）：角度误差 deg -> 角速度 deg/s，结果保持到下次执行 */
+static void Gimbal_AngleLoop(GimbalAxisCtrl_t *ctrl, float angle_error_deg)
 {
-    ctrl->speed_ref_rads = PIDUpdate(&ctrl->angle_pid, angle_error_rad) +
-                           target_omega_rads;
+    ctrl->angle_out_dps = PIDUpdate(&ctrl->angle_pid, angle_error_deg);
+}
+
+/* 内环（每周期）：角度环输出 + 目标角速度前馈 -> 速度环 + 模型前馈 */
+static void Gimbal_SpeedLoop(GimbalAxisCtrl_t *ctrl, float target_omega_dps,
+                             float omega_dps)
+{
+    ctrl->speed_ref_dps = ctrl->angle_out_dps + target_omega_dps;
     ctrl->feedforward = 0.0f;   /* TODO: 由 model 计算重力/惯量前馈 */
     ctrl->output = AbsLimiter(PIDUpdate(&ctrl->speed_pid,
-                                        ctrl->speed_ref_rads - omega_rads) +
+                                        ctrl->speed_ref_dps - omega_dps) +
                               ctrl->feedforward,
                               ctrl->speed_pid.output_max);
-    return ctrl->output;
 }
 
 void Gimbal_Control(Gimbal_t *gimbal)
@@ -214,27 +224,31 @@ void Gimbal_Control(Gimbal_t *gimbal)
     const GimbalObserver_t *obs = &gimbal->observer;
     if (gimbal->state == GIMBAL_PROTECTED || obs->valid == 0U)
     {
-        Gimbal_ZeroOutput(gimbal);
+        Gimbal_ResetControl(gimbal);
         /* 目标跟随当前姿态，上层以 gimbal->target 为增量基准，恢复时不跳变 */
         if (obs->valid != 0U)
         {
-            gimbal->target.pitch_rad = DoubleEdgeLimiter(obs->pitch_rad,
-                                                         gimbal->pitch_min_rad,
-                                                         gimbal->pitch_max_rad);
-            gimbal->target.yaw_rad = obs->yaw_rad;
+            gimbal->target.pitch_deg = DoubleEdgeLimiter(obs->pitch_deg,
+                                                         gimbal->pitch_min_deg,
+                                                         gimbal->pitch_max_deg);
+            gimbal->target.yaw_deg = obs->yaw_deg;
         }
-        gimbal->target.pitch_omega_rads = 0.0f;
-        gimbal->target.yaw_omega_rads = 0.0f;
+        gimbal->target.pitch_omega_dps = 0.0f;
+        gimbal->target.yaw_omega_dps = 0.0f;
+        Gimbal_ApplyOutput(gimbal);
         return;
     }
 
     const GimbalTarget_t *target = &gimbal->target;
-    float yaw_out = Gimbal_AxisControl(&gimbal->controller.axis[GIMBAL_YAW],
-                                       AngleLimit(target->yaw_rad - obs->yaw_rad, -MOTOR_PI, MOTOR_PI),
-                                       target->yaw_omega_rads, obs->yaw_omega_rads);
-    float pitch_out = Gimbal_AxisControl(&gimbal->controller.axis[GIMBAL_PITCH],
-                                         target->pitch_rad - obs->pitch_rad,
-                                         target->pitch_omega_rads, obs->pitch_omega_rads);
-    Gimbal_ApplyOutput(gimbal->motor[GIMBAL_YAW], yaw_out);
-    Gimbal_ApplyOutput(gimbal->motor[GIMBAL_PITCH], pitch_out);
+    GimbalAxisCtrl_t *yaw = &gimbal->controller.axis[GIMBAL_YAW];
+    GimbalAxisCtrl_t *pitch = &gimbal->controller.axis[GIMBAL_PITCH];
+    if (RateDividerTick(&gimbal->controller.angle_loop) != 0U)
+    {
+        Gimbal_AngleLoop(yaw, AngleLimit(target->yaw_deg - obs->yaw_deg,
+                                         -180.0f, 180.0f));
+        Gimbal_AngleLoop(pitch, target->pitch_deg - obs->pitch_deg);
+    }
+    Gimbal_SpeedLoop(yaw, target->yaw_omega_dps, obs->yaw_omega_dps);
+    Gimbal_SpeedLoop(pitch, target->pitch_omega_dps, obs->pitch_omega_dps);
+    Gimbal_ApplyOutput(gimbal);
 }
