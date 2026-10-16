@@ -9,15 +9,18 @@
 #include "ins.h"
 #include "pid.h"
 
-/* 角度统一 deg，角速度 deg/s，角加速度 deg/s^2
+/* 角度统一 deg，角速度 deg/s
  * 每个控制周期依次调用：Gimbal_Input -> Gimbal_Estimate -> Gimbal_Control
+ * 坐标系与关节角定义见 gimbal.md：底盘系与末端系均为 X 前、Y 左、Z 上
+ * 世界系目标与观测沿用 INS 约定：yaw 顺时针为正，pitch 抬头为正
+ * 关节角：yaw 绕底盘 Z 轴逆时针为正，pitch 抬头为正，零位时枪管水平朝底盘正前方
  */
 
 /*--------------------------------------状态机--------------------------------------*/
 typedef enum {
     GIMBAL_PROTECTED,   ///< 保护：输出清零，目标跟随观测
     GIMBAL_NORMAL,      ///< 常规跟随
-    GIMBAL_SNIPER       ///< 吊射：换一套更硬的 PID不不不
+    GIMBAL_SNIPER       ///< 吊射：换一套更硬的 PID
 } GimbalState_t;
 
 typedef enum {
@@ -34,7 +37,7 @@ typedef struct {
 } GimbalModel_t;
 
 /*--------------------------------------输入层--------------------------------------*/
-/* 上层（遥控/自瞄）给出的原始指令 */
+/* 上层（遥控/自瞄）给出的世界系指向，INS 约定 */
 typedef struct {
     GimbalState_t state;
     float pitch_deg;
@@ -43,28 +46,25 @@ typedef struct {
     float yaw_omega_dps;
 } GimbalInput_t;
 
-/* 输入层处理后的目标 */
+/* 输入层处理后的世界系目标 */
 typedef struct {
     float pitch_deg;
     float yaw_deg;
-    float pitch_omega_dps; ///< 期望角速度，作为速度环前馈
+    float pitch_omega_dps; ///< 期望世界角速度，映射到关节后作为速度环前馈
     float yaw_omega_dps;
 } GimbalTarget_t;
 
 /*--------------------------------------估计层--------------------------------------*/
 typedef struct {
-    float roll_deg;
+    float roll_deg;                             ///< 末端世界姿态，INS 约定
     float pitch_deg;
     float yaw_deg;
-    float pitch_omega_dps;      ///< 欧拉角一阶导
-    float yaw_omega_dps;
-    float pitch_alpha_dps2;     ///< 欧拉角二阶导（差分 + SmoothFilter）
-    float yaw_alpha_dps2;
-    float yaw_motor_angle_deg;  ///< 电机编码器单圈角 [-180, 180]
-    float pitch_motor_angle_deg;
-    uint8_t valid;              ///< INS 就绪且本周期取到数据
-    SmoothFilter pitch_alpha_filter;
-    SmoothFilter yaw_alpha_filter;
+    float joint_deg[GIMBAL_AXIS_COUNT];         ///< 编码器关节角，方向按 motor->inverse 折算
+    float joint_omega_dps[GIMBAL_AXIS_COUNT];   ///< 编码器关节角速度（相对底盘）
+    float gimbal_to_world[3][3];                ///< 末端 -> 世界，由 INS 欧拉角构造
+    float gimbal_to_base[3][3];                 ///< 末端 -> 底盘，由关节角构造
+    float base_to_world[3][3];                  ///< 底盘 -> 世界，由前两者反解
+    uint8_t valid;                              ///< INS 就绪且本周期取到数据
 } GimbalObserver_t;
 
 /*--------------------------------------控制层--------------------------------------*/
@@ -77,8 +77,8 @@ typedef struct {
 } GimbalPIDParam_t;
 
 typedef struct {
-    GimbalPIDParam_t angle;     ///< 角度环：deg -> deg/s
-    GimbalPIDParam_t speed;     ///< 速度环：deg/s -> 电机指令
+    GimbalPIDParam_t angle;     ///< 角度环：关节角 deg -> deg/s
+    GimbalPIDParam_t speed;     ///< 速度环：关节角速度 deg/s -> 电机指令
 } GimbalAxisParam_t;
 
 typedef struct {
@@ -89,28 +89,35 @@ typedef struct {
     PIDStruct angle_pid;
     PIDStruct speed_pid;
     float angle_out_dps;        ///< 角度环输出，分频周期间保持
-    float speed_ref_dps;        ///< 角度环输出 + 目标角速度前馈
+    float speed_ref_dps;        ///< 角度环输出 + 关节角速度前馈
     float feedforward;          ///< 模型前馈（重力补偿等），暂为 0
     float output;               ///< 写入电机的最终指令
 } GimbalAxisCtrl_t;
 
+/* 逆运动学解出的关节空间指令 */
+typedef struct {
+    float angle_deg[GIMBAL_AXIS_COUNT];
+    float omega_dps[GIMBAL_AXIS_COUNT];
+} GimbalJointRef_t;
+
 typedef struct {
     GimbalAxisCtrl_t axis[GIMBAL_AXIS_COUNT];
+    GimbalJointRef_t joint_ref;
     RateDivider angle_loop;     ///< 角度环相对速度环的分频
 } GimbalController_t;
 
 /*--------------------------------------对象与构造参数--------------------------------------*/
-/* 电机方向用电机自身的 inverse 配置：正指令应让对应欧拉角增大 */
+/* 电机 inverse 同时决定指令和编码器反馈的方向：正指令应让关节角增大
+ * 电机 zero_point 标定在枪管水平、朝底盘正前方的位置 */
 typedef struct {
     GimbalModel_t model;
     Motor_t *yaw_motor;
     Motor_t *pitch_motor;
     GimbalGainSet_t normal_gain;
     GimbalGainSet_t sniper_gain;
-    const INS_t *ins;           ///< 安装在 pitch 连杆上的 IMU
-    float pitch_min_deg;
+    const INS_t *ins;           ///< 安装在 pitch 连杆上的 IMU，轴向与末端系对齐
+    float pitch_min_deg;        ///< pitch 关节角限位
     float pitch_max_deg;
-    float alpha_filter;         ///< 二阶导低通系数 0~1，越大越平滑
     uint16_t angle_loop_div;    ///< 每 N 次 Gimbal_Control 跑一次角度环，0/1 为不分频
     GimbalState_t init_state;
 } GimbalConfig_t;
@@ -130,13 +137,13 @@ typedef struct {
 } Gimbal_t;
 
 void Gimbal_Init(Gimbal_t *gimbal, const GimbalConfig_t *config);
-/* 输入层：状态切换，目标限幅（pitch）与折算（yaw）
+/* 输入层：状态切换，世界系目标折算
  * 保护状态下忽略外部角度，目标由控制层跟随当前姿态；
- * 上层做增量控制时应以 gimbal->target 为基准，切回 NORMAL 不会跳变 */
+ * 上层做增量控制时应以 gimbal->target 为基准，pitch 超出关节限位时控制层会把目标改写为可达方向 */
 void Gimbal_Input(Gimbal_t *gimbal, const GimbalInput_t *input);
-/* 估计层：从 INS 和电机反馈更新 observer */
-void Gimbal_Estimate(Gimbal_t *gimbal, float dt_s);
-/* 控制层：双环 PID + 前馈，写入两个电机的 motorcmd 并发送到各自 CAN 总线
+/* 估计层：由 INS 和编码器更新关节角与三个旋转矩阵 */
+void Gimbal_Estimate(Gimbal_t *gimbal);
+/* 控制层：世界系目标 -> 底盘系 -> 关节角（逆运动学），再做关节空间双环 PID
  * 调用频率即速度环频率，角度环按 angle_loop_div 分频；
  * 角度环 PID 参数按分频后的周期整定 */
 void Gimbal_Control(Gimbal_t *gimbal);
