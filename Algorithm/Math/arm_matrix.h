@@ -49,4 +49,12 @@ typedef arm_matrix_instance_f32 matrix_t ;
  */
 #define matrix_trans(pSrc, pDst)   arm_mat_trans_f32(pSrc, pDst)
 
+/**
+ * \brief 矩阵乘向量 res = A * vec
+ * \param[in] pA 输入矩阵A指针
+ * \param[in] pVec 输入向量，长度为 A 的列数
+ * \param[out] pRes 结果向量，长度为 A 的行数
+ */
+#define matrix_vec_mult(pA, pVec, pRes)   arm_mat_vec_mult_f32(pA, pVec, pRes)
+
 #endif

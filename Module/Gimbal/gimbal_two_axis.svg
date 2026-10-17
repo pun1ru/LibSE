@@ -1,0 +1,358 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1120" width="1600" height="1120" role="img" aria-labelledby="diagramTitle diagramDesc">
+  <title id="diagramTitle">二轴云台：结构、坐标系、运动学与指向控制</title>
+  <desc id="diagramDesc">以侧视结构图说明 yaw 与 pitch 两轴、连杆长度 l 和 L、末端视轴，并给出坐标系定义、DH 参数、正向旋转矩阵和目标角反解公式。</desc>
+  <defs>
+    <pattern id="dotGrid" width="24" height="24" patternUnits="userSpaceOnUse">
+      <circle cx="1" cy="1" r="0.8" fill="#DCE5EC"/>
+    </pattern>
+    <filter id="cardShadow" x="-10%" y="-15%" width="120%" height="135%">
+      <feDropShadow dx="0" dy="7" stdDeviation="12" flood-color="#10283A" flood-opacity="0.075"/>
+    </filter>
+    <linearGradient id="mastGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#1B5561"/><stop offset="0.48" stop-color="#4B8D98"/><stop offset="1" stop-color="#163E49"/>
+    </linearGradient>
+    <linearGradient id="barrelGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#536C79"/><stop offset="0.45" stop-color="#263844"/><stop offset="1" stop-color="#17252F"/>
+    </linearGradient>
+    <linearGradient id="baseFront" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#E2EBF0"/><stop offset="1" stop-color="#B7C8D2"/>
+    </linearGradient>
+    <linearGradient id="navyPanel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#17374B"/><stop offset="1" stop-color="#0F2839"/>
+    </linearGradient>
+    <marker id="arrowTeal" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L8 4 L0 8 Z" fill="#0C7C86"/></marker>
+    <marker id="arrowOrange" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L8 4 L0 8 Z" fill="#D9662A"/></marker>
+    <marker id="arrowGreen" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L8 4 L0 8 Z" fill="#1F9D72"/></marker>
+    <marker id="arrowDark" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L8 4 L0 8 Z" fill="#2F4550"/></marker>
+    <marker id="arrowViolet" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L8 4 L0 8 Z" fill="#6E56CF"/></marker>
+  </defs>
+  <style>
+    text { font-family: 'Microsoft YaHei UI','Microsoft YaHei','Noto Sans SC','PingFang SC',sans-serif; }
+    .mono { font-family: 'Cascadia Mono','Consolas','SFMono-Regular','DejaVu Sans Mono',monospace; }
+    .hero { font-size: 34px; font-weight: 700; fill: #173042; letter-spacing: .4px; }
+    .hero-sub { font-size: 15px; fill: #607686; letter-spacing: .2px; }
+    .section-kicker { font-size: 10px; font-weight: 700; fill: #78909F; letter-spacing: 1.7px; }
+    .section-title { font-size: 19px; font-weight: 700; fill: #173042; }
+    .section-sub { font-size: 12.5px; fill: #6A7F8F; }
+    .card-title { font-size: 13px; font-weight: 700; fill: #244052; }
+    .body { font-size: 12.5px; fill: #314B5D; }
+    .body-small { font-size: 11.5px; fill: #5D7483; }
+    .label { font-size: 12px; font-weight: 600; fill: #284557; }
+    .tiny { font-size: 10.5px; fill: #708695; }
+  </style>
+
+  <rect width="1600" height="1120" fill="#F3F6FA"/>
+  <rect width="1600" height="1120" fill="url(#dotGrid)" opacity="0.64"/>
+
+  <!-- Header -->
+  <g id="header">
+    <rect x="40" y="28" width="7" height="65" rx="3.5" fill="#0C7C86"/>
+    <text x="64" y="62" class="hero">二轴云台指向控制</text>
+    <text x="65" y="88" class="hero-sub">结构 · 坐标系 · DH 运动学 · 目标反解</text>
+    <g transform="translate(1120 43)">
+      <rect x="0" y="0" width="126" height="34" rx="17" fill="#E2F2F3" stroke="#B7DCDD"/>
+      <circle cx="19" cy="17" r="4" fill="#0C7C86"/>
+      <text x="31" y="21.5" font-size="12.5" font-weight="700" fill="#0C7C86">YAW  φ</text>
+      <text x="145" y="22" font-size="18" fill="#8AA0AE">+</text>
+      <rect x="169" y="0" width="142" height="34" rx="17" fill="#FBE9E0" stroke="#EFC7B4"/>
+      <circle cx="188" cy="17" r="4" fill="#D9662A"/>
+      <text x="200" y="21.5" font-size="12.5" font-weight="700" fill="#C95720">PITCH  θ</text>
+      <rect x="326" y="0" width="112" height="34" rx="17" fill="#1A3547"/>
+      <text x="382" y="22" text-anchor="middle" font-size="12" font-weight="700" fill="#FFFFFF">2 DOF</text>
+    </g>
+  </g>
+
+  <!-- Section 01: structure -->
+  <g id="structure-card">
+    <rect x="40" y="130" width="930" height="560" rx="20" fill="#FFFFFF" stroke="#DDE6ED" filter="url(#cardShadow)"/>
+    <text x="70" y="160" class="section-kicker">01 / STRUCTURE</text>
+    <text x="70" y="187" class="section-title">机械结构：Yaw 转台 + Pitch 摇架</text>
+    <text x="70" y="209" class="section-sub">Yaw 轴竖直，Pitch 轴水平；Pitch 轴相对 Yaw 轴后移 l，枪口再沿 X₂ 伸出 L。</text>
+
+    <g id="gimbal-structure">
+      <ellipse cx="385" cy="651" rx="210" ry="19" fill="#DDE7ED"/>
+
+      <!-- Base casting -->
+      <polygon points="218,584 518,584 562,610 264,610" fill="#D5E1E8" stroke="#849CA9" stroke-width="1.2" stroke-linejoin="round"/>
+      <polygon points="218,584 518,584 518,625 218,625" fill="url(#baseFront)" stroke="#849CA9" stroke-width="1.2" stroke-linejoin="round"/>
+      <polygon points="518,584 562,610 562,651 518,625" fill="#A9BCC7" stroke="#849CA9" stroke-width="1.2" stroke-linejoin="round"/>
+      <line x1="218" y1="603" x2="518" y2="603" stroke="#A9BCC7" stroke-width="1"/>
+      <rect x="292" y="606" width="150" height="9" rx="4.5" fill="#91A7B4" opacity="0.65"/>
+      <circle cx="269" cy="615" r="4" fill="#627D8C"/>
+      <circle cx="510" cy="615" r="4" fill="#627D8C"/>
+
+      <!-- Yaw turntable and mast -->
+      <path d="M288 558 A98 24 0 0 0 488 558 L488 582 A98 24 0 0 1 288 582 Z" fill="#2F6671" stroke="#24525B" stroke-width="1"/>
+      <ellipse cx="388" cy="558" rx="98" ry="24" fill="#5D929B" stroke="#2F6671" stroke-width="1.2"/>
+      <ellipse cx="388" cy="558" rx="72" ry="15" fill="#83AEB4" opacity="0.33"/>
+      <polygon points="373,554 403,554 399,338 377,338" fill="url(#mastGrad)" stroke="#173E47" stroke-width="1.1" stroke-linejoin="round"/>
+      <line x1="383" y1="543" x2="384" y2="350" stroke="#A4D3D7" stroke-width="2" opacity="0.42"/>
+      <line x1="388" y1="639" x2="388" y2="249" stroke="#0C7C86" stroke-width="1.4" stroke-dasharray="6 6" opacity="0.72"/>
+      <text x="401" y="258" font-size="11.5" font-weight="700" fill="#0C7C86">z₁ / yaw 轴</text>
+      <path d="M436 552 A48 14 0 0 1 351 548" fill="none" stroke="#0C7C86" stroke-width="2" marker-end="url(#arrowTeal)"/>
+      <text x="441" y="548" font-size="13" font-weight="700" fill="#0C7C86">φ</text>
+
+      <!-- Link 1 and pivot -->
+      <rect x="296" y="318" width="104" height="19" rx="7" fill="#506D79" stroke="#344B55" stroke-width="1"/>
+      <rect x="304" y="321" width="88" height="4" rx="2" fill="#89A3AD" opacity="0.65"/>
+      <text x="348" y="310" text-anchor="middle" font-size="11.5" font-weight="600" fill="#506D79">连杆 1</text>
+      <line x1="302" y1="366" x2="390" y2="366" stroke="#7B8F9B" stroke-width="1.2" stroke-dasharray="4 4" marker-start="url(#arrowDark)" marker-end="url(#arrowDark)"/>
+      <text x="346" y="384" text-anchor="middle" font-size="14" font-style="italic" font-weight="700" fill="#506D79">l</text>
+      <circle cx="300" cy="330" r="25" fill="#39515D" stroke="#233944" stroke-width="1.4"/>
+      <circle cx="300" cy="330" r="15" fill="#D9E3E8" stroke="#91A6B1" stroke-width="1.2"/>
+      <circle cx="300" cy="330" r="5.5" fill="#D9662A"/>
+      <path d="M284 330 H316 M300 314 V346" stroke="#667F8C" stroke-width="1" opacity="0.65"/>
+      <text x="243" y="281" font-size="11.5" font-weight="700" fill="#D9662A">J2 / pitch</text>
+      <text x="238" y="298" font-size="10.5" fill="#7C8F9A">z₂ 指向纸内（−Y_B）</text>
+
+      <!-- Barrel group -->
+      <g transform="rotate(-24.4 300 330)">
+        <rect x="288" y="316" width="354" height="28" rx="13" fill="url(#barrelGrad)" stroke="#15232C" stroke-width="1.3"/>
+        <rect x="300" y="321" width="320" height="5" rx="2.5" fill="#8BA0AC" opacity="0.45"/>
+        <rect x="376" y="311" width="13" height="38" rx="4" fill="#D9662A" opacity="0.94"/>
+        <rect x="492" y="313" width="10" height="34" rx="3" fill="#D9662A" opacity="0.9"/>
+        <rect x="600" y="308" width="39" height="44" rx="7" fill="#3B505B" stroke="#16262F" stroke-width="1.2"/>
+        <rect x="610" y="315" width="8" height="30" rx="3" fill="#B2C2CA"/>
+        <rect x="430" y="286" width="74" height="24" rx="6" fill="#465D69" stroke="#263A45" stroke-width="1"/>
+        <rect x="441" y="292" width="44" height="7" rx="3.5" fill="#8FA7B2" opacity="0.62"/>
+        <line x1="300" y1="374" x2="639" y2="374" stroke="#D9662A" stroke-width="1.2" stroke-dasharray="4 4" marker-start="url(#arrowOrange)" marker-end="url(#arrowOrange)"/>
+        <text x="469" y="367" text-anchor="middle" font-size="15" font-style="italic" font-weight="700" fill="#D9662A">L</text>
+        <text x="470" y="296" text-anchor="middle" font-size="11.5" font-weight="600" fill="#DADFE2" opacity="0.9">连杆 2 / 枪管</text>
+      </g>
+      <path d="M382 330 A82 82 0 0 0 374.7 296.1" fill="none" stroke="#D9662A" stroke-width="2" marker-end="url(#arrowOrange)"/>
+      <text x="388" y="319" font-size="14" font-style="italic" font-weight="700" fill="#D9662A">θ</text>
+
+      <!-- Muzzle, end frame and target ray -->
+      <circle cx="610" cy="189" r="8" fill="#6E56CF" stroke="#FFFFFF" stroke-width="2"/>
+      <line x1="610" y1="189" x2="645" y2="173" stroke="#6E56CF" stroke-width="1.7" marker-end="url(#arrowViolet)"/>
+      <line x1="610" y1="189" x2="631" y2="158" stroke="#6E56CF" stroke-width="1.7" marker-end="url(#arrowViolet)"/>
+      <line x1="610" y1="189" x2="584" y2="171" stroke="#6E56CF" stroke-width="1.7" marker-end="url(#arrowViolet)"/>
+      <text x="647" y="207" font-size="12" font-weight="700" fill="#6E56CF">G / 枪口</text>
+      <line x1="610" y1="189" x2="677" y2="132" stroke="#1F9D72" stroke-width="1.7" stroke-dasharray="7 5" marker-end="url(#arrowGreen)"/>
+      <circle cx="682" cy="127" r="12" fill="none" stroke="#1F9D72" stroke-width="1.7"/>
+      <path d="M682 110 V144 M665 127 H699" stroke="#1F9D72" stroke-width="1.4"/>
+      <circle cx="682" cy="127" r="2.5" fill="#1F9D72"/>
+      <text x="702" y="120" font-size="11.5" font-weight="700" fill="#1F9D72">T / 目标</text>
+      <text x="702" y="137" font-size="10.5" fill="#5D8274">X_T 指向目标</text>
+
+      <!-- J1 frame -->
+      <circle cx="388" cy="330" r="5" fill="#0C7C86" stroke="#FFFFFF" stroke-width="1.8"/>
+      <line x1="388" y1="330" x2="388" y2="286" stroke="#0C7C86" stroke-width="1.7" marker-end="url(#arrowTeal)"/>
+      <line x1="388" y1="330" x2="430" y2="330" stroke="#0C7C86" stroke-width="1.7" marker-end="url(#arrowTeal)"/>
+      <line x1="388" y1="330" x2="411" y2="348" stroke="#0C7C86" stroke-width="1.4" stroke-dasharray="3 3" marker-end="url(#arrowTeal)"/>
+      <text x="435" y="326" font-size="11" font-weight="700" fill="#0C7C86">x₁</text>
+      <text x="396" y="281" font-size="11" font-weight="700" fill="#0C7C86">z₁</text>
+      <text x="414" y="361" font-size="10.5" font-weight="700" fill="#0C7C86">y₁</text>
+
+      <!-- B frame -->
+      <circle cx="579" cy="603" r="4.5" fill="#2F4550" stroke="#FFFFFF" stroke-width="1.6"/>
+      <line x1="579" y1="603" x2="579" y2="566" stroke="#2F4550" stroke-width="1.6" marker-end="url(#arrowDark)"/>
+      <line x1="579" y1="603" x2="622" y2="603" stroke="#2F4550" stroke-width="1.6" marker-end="url(#arrowDark)"/>
+      <line x1="579" y1="603" x2="602" y2="584" stroke="#2F4550" stroke-width="1.4" stroke-dasharray="3 3" marker-end="url(#arrowDark)"/>
+      <text x="625" y="607" font-size="11" font-weight="700" fill="#2F4550">x_B</text>
+      <text x="568" y="560" font-size="11" font-weight="700" fill="#2F4550">z_B</text>
+      <text x="605" y="581" font-size="10.5" font-weight="700" fill="#2F4550">y_B</text>
+
+      <!-- W frame -->
+      <circle cx="110" cy="581" r="4.5" fill="#536973" stroke="#FFFFFF" stroke-width="1.6"/>
+      <line x1="110" y1="581" x2="110" y2="537" stroke="#536973" stroke-width="1.6" marker-end="url(#arrowDark)"/>
+      <line x1="110" y1="581" x2="157" y2="581" stroke="#536973" stroke-width="1.6" marker-end="url(#arrowDark)"/>
+      <line x1="110" y1="581" x2="135" y2="562" stroke="#536973" stroke-width="1.4" stroke-dasharray="3 3" marker-end="url(#arrowDark)"/>
+      <text x="86" y="601" font-size="13" font-weight="700" fill="#536973">W</text>
+      <text x="74" y="619" font-size="10.5" fill="#6D818D">NWU · 世界系</text>
+      <text x="134" y="531" font-size="10.5" font-weight="700" fill="#536973">z_W</text>
+      <text x="162" y="597" font-size="10.5" font-weight="700" fill="#536973">x_W</text>
+      <text x="139" y="559" font-size="10" font-weight="700" fill="#536973">y_W</text>
+      <path d="M243 642 L285 622" stroke="#A3B4BE" stroke-width="1"/>
+      <text x="173" y="657" font-size="10.5" fill="#708695">底盘</text>
+    </g>
+
+    <!-- Convention callout -->
+    <rect x="710" y="222" width="240" height="116" rx="14" fill="#F7FAFC" stroke="#DCE7ED"/>
+    <text x="830" y="246" text-anchor="middle" class="card-title">符号与正方向</text>
+    <circle cx="728" cy="270" r="4" fill="#0C7C86"/>
+    <text x="740" y="274" class="body-small"><tspan font-weight="700" fill="#0C7C86">φ</tspan>  Yaw：俯视逆时针为正</text>
+    <circle cx="728" cy="294" r="4" fill="#D9662A"/>
+    <text x="740" y="298" class="body-small"><tspan font-weight="700" fill="#D9662A">θ</tspan>  Pitch：绕 z₂ 正转抬头</text>
+    <circle cx="728" cy="318" r="4" fill="#506D79"/>
+    <text x="740" y="322" class="body-small"><tspan font-weight="700" fill="#506D79">l / L</tspan>  连杆 1 / 枪管长度</text>
+
+    <!-- Top view inset -->
+    <rect x="710" y="348" width="240" height="225" rx="14" fill="#F7FAFC" stroke="#DCE7ED"/>
+    <text x="830" y="374" text-anchor="middle" class="card-title">俯视：方位角 φ</text>
+    <circle cx="830" cy="470" r="76" fill="#FFFFFF" stroke="#DDE7ED" stroke-width="1.2"/>
+    <circle cx="830" cy="470" r="61" fill="none" stroke="#B8D7DA" stroke-width="1" stroke-dasharray="4 5"/>
+    <line x1="830" y1="470" x2="903" y2="470" stroke="#2F4550" stroke-width="1.6" marker-end="url(#arrowDark)"/>
+    <line x1="830" y1="470" x2="830" y2="397" stroke="#2F4550" stroke-width="1.6" marker-end="url(#arrowDark)"/>
+    <text x="907" y="474" font-size="10.5" font-weight="700" fill="#2F4550">x_B</text>
+    <text x="820" y="391" font-size="10.5" font-weight="700" fill="#2F4550">y_B</text>
+    <circle cx="830" cy="470" r="5" fill="#0C7C86"/>
+    <circle cx="789" cy="470" r="4" fill="#D9662A"/>
+    <text x="786" y="490" font-size="9.5" fill="#7A8D99">J2</text>
+    <text x="842" y="465" font-size="9.5" fill="#7A8D99">J1</text>
+    <line x1="789" y1="470" x2="874" y2="437" stroke="#1F9D72" stroke-width="1.8" stroke-dasharray="6 4" marker-end="url(#arrowGreen)"/>
+    <path d="M839 470 A50 50 0 0 0 865 441" fill="none" stroke="#0C7C86" stroke-width="1.8" marker-end="url(#arrowTeal)"/>
+    <text x="852" y="457" font-size="12" font-weight="700" fill="#0C7C86">φ</text>
+    <line x1="789" y1="505" x2="830" y2="505" stroke="#7B8F9B" stroke-width="1" stroke-dasharray="3 3"/>
+    <text x="807" y="519" text-anchor="middle" font-size="10.5" font-style="italic" fill="#7B8F9B">l</text>
+    <text x="830" y="550" text-anchor="middle" font-size="10.5" fill="#708695">pitch 轴在 yaw 轴后方 l</text>
+
+    <!-- Key insight -->
+    <rect x="710" y="585" width="240" height="79" rx="14" fill="#EAF5F3" stroke="#CBE5DD"/>
+    <text x="830" y="611" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1F7C61">只约束视轴方向</text>
+    <text x="830" y="632" text-anchor="middle" class="body-small" fill="#3C6B5F">φ + θ 共 2 个自由度</text>
+    <text x="830" y="650" text-anchor="middle" class="tiny" fill="#5F7F75">绕视轴的 Roll 不可控</text>
+  </g>
+
+  <!-- Section 02: frames -->
+  <g id="frames-card">
+    <rect x="990" y="130" width="570" height="560" rx="20" fill="#FFFFFF" stroke="#DDE6ED" filter="url(#cardShadow)"/>
+    <text x="1020" y="160" class="section-kicker">02 / COORDINATE FRAMES</text>
+    <text x="1020" y="187" class="section-title">坐标系：底盘 → 关节 → 末端</text>
+    <text x="1020" y="209" class="section-sub">记号 R_a^b：把 a 系向量变到 b 系；0 系为 {B}，3 系为 {G}。</text>
+
+    <rect x="1014" y="219" width="522" height="57" rx="12" fill="#F5F8FA"/>
+    <rect x="1014" y="219" width="48" height="57" rx="12" fill="#536973"/>
+    <text x="1038" y="253" text-anchor="middle" font-size="17" font-weight="700" fill="#FFFFFF">W</text>
+    <text x="1077" y="239" class="label">世界系</text>
+    <text x="1077" y="257" class="body-small">NWU：X 北 · Y 西 · Z 天；绝对静止的惯性参考</text>
+    <text x="1077" y="270" class="tiny">视觉目标指向通常在这个系下给出</text>
+
+    <rect x="1014" y="281" width="522" height="57" rx="12" fill="#F5F8FA"/>
+    <rect x="1014" y="281" width="48" height="57" rx="12" fill="#2F4550"/>
+    <text x="1038" y="315" text-anchor="middle" font-size="17" font-weight="700" fill="#FFFFFF">B</text>
+    <text x="1077" y="301" class="label">底盘坐标系</text>
+    <text x="1077" y="319" class="body-small">X 前 · Y 左 · Z 上；固连底盘</text>
+    <text x="1077" y="332" class="tiny">底盘 IMU 测得 R_B^W；它是所有指向误差的比较基准</text>
+
+    <rect x="1014" y="343" width="522" height="57" rx="12" fill="#F2FAFA"/>
+    <rect x="1014" y="343" width="48" height="57" rx="12" fill="#0C7C86"/>
+    <text x="1038" y="377" text-anchor="middle" font-size="14" font-weight="700" fill="#FFFFFF">J1</text>
+    <text x="1077" y="363" class="label">Yaw 关节系</text>
+    <text x="1077" y="381" class="body-small">原点在 yaw 轴上、pitch 轴高度；Z₁ = Z_B</text>
+    <text x="1077" y="394" class="tiny">φ = 0 时姿态与 {B} 重合；正转方向为俯视逆时针</text>
+
+    <rect x="1014" y="405" width="522" height="57" rx="12" fill="#FDF5F0"/>
+    <rect x="1014" y="405" width="48" height="57" rx="12" fill="#D9662A"/>
+    <text x="1038" y="439" text-anchor="middle" font-size="14" font-weight="700" fill="#FFFFFF">J2</text>
+    <text x="1077" y="425" class="label">Pitch 关节系</text>
+    <text x="1077" y="443" class="body-small">原点在 pitch 轴上，X₂ 沿枪管方向</text>
+    <text x="1077" y="456" class="tiny">Z₂ = −Y_J1；绕 Z₂ 正转抬头，θ &gt; 0 时视轴 z 分量为正</text>
+
+    <rect x="1014" y="467" width="522" height="57" rx="12" fill="#F7F5FD"/>
+    <rect x="1014" y="467" width="48" height="57" rx="12" fill="#6E56CF"/>
+    <text x="1038" y="501" text-anchor="middle" font-size="17" font-weight="700" fill="#FFFFFF">G</text>
+    <text x="1077" y="487" class="label">云台末端系</text>
+    <text x="1077" y="505" class="body-small">原点在枪口；X_G 是视轴，Y_G = −Z_J2，Z_G = Y_J2</text>
+    <text x="1077" y="518" class="tiny">与 {J2} 只差固定旋转：X_G = X_J2</text>
+
+    <rect x="1014" y="529" width="522" height="57" rx="12" fill="#F3FAF6"/>
+    <rect x="1014" y="529" width="48" height="57" rx="12" fill="#1F9D72"/>
+    <text x="1038" y="563" text-anchor="middle" font-size="17" font-weight="700" fill="#FFFFFF">T</text>
+    <text x="1077" y="549" class="label">目标姿态系</text>
+    <text x="1077" y="567" class="body-small">X_T 指向目标；取第一列得到底盘系指向向量</text>
+    <text x="1077" y="580" class="tiny">Y_T、Z_T（含绕视轴的 Roll）二轴云台无法约束</text>
+
+    <line x1="1020" y1="612" x2="1530" y2="612" stroke="#E1E9EF" stroke-width="1"/>
+    <circle cx="1032" cy="636" r="4" fill="#0C7C86"/>
+    <text x="1044" y="640" class="body-small" font-weight="700" fill="#2C4C5C">双 IMU 一致性校验</text>
+    <text x="1044" y="660" class="body-small" fill="#506B7A"><tspan class="mono" font-size="11">R_G^B = (R_B^W)ᵀ R_G^W  ⇔  R_z(φ) R_y(−θ)</tspan></text>
+    <text x="1044" y="678" class="tiny">两路姿态与编码器正解应相等，可用于零位标定和异常检测</text>
+  </g>
+
+  <!-- Section 03: kinematics -->
+  <g id="kinematics-card">
+    <rect x="40" y="710" width="930" height="360" rx="20" fill="#FFFFFF" stroke="#DDE6ED" filter="url(#cardShadow)"/>
+    <text x="70" y="740" class="section-kicker">03 / KINEMATICS</text>
+    <text x="70" y="767" class="section-title">DH 参数与视轴正向运动学</text>
+    <text x="70" y="789" class="section-sub">夹角与偏移均按说明中的改进 DH 约定；姿态旋转与平移合成为 T₀₃。</text>
+
+    <text x="72" y="820" class="card-title">DH 参数表</text>
+    <rect x="72" y="830" width="420" height="34" rx="8" fill="#E9F0F4"/>
+    <text x="95" y="852" text-anchor="middle" font-size="11" font-weight="700" fill="#59707E">i</text>
+    <text x="160" y="852" text-anchor="middle" font-size="11" font-weight="700" fill="#59707E">αᵢ₋₁</text>
+    <text x="253" y="852" text-anchor="middle" font-size="11" font-weight="700" fill="#59707E">aᵢ₋₁</text>
+    <text x="349" y="852" text-anchor="middle" font-size="11" font-weight="700" fill="#59707E">dᵢ</text>
+    <text x="438" y="852" text-anchor="middle" font-size="11" font-weight="700" fill="#59707E">θᵢ</text>
+    <rect x="72" y="864" width="420" height="32" fill="#FFFFFF"/>
+    <text x="95" y="885" text-anchor="middle" class="mono" font-size="13" fill="#2F4550">1</text>
+    <text x="160" y="885" text-anchor="middle" class="mono" font-size="13" fill="#2F4550">0°</text>
+    <text x="253" y="885" text-anchor="middle" class="mono" font-size="13" fill="#2F4550">0</text>
+    <text x="349" y="885" text-anchor="middle" class="mono" font-size="13" fill="#2F4550">0</text>
+    <text x="438" y="885" text-anchor="middle" class="mono" font-size="13" fill="#0C7C86">φ</text>
+    <rect x="72" y="896" width="420" height="32" fill="#F7FAFB"/>
+    <text x="95" y="917" text-anchor="middle" class="mono" font-size="13" fill="#2F4550">2</text>
+    <text x="160" y="917" text-anchor="middle" class="mono" font-size="13" fill="#2F4550">+90°</text>
+    <text x="253" y="917" text-anchor="middle" class="mono" font-size="13" fill="#D9662A">−l</text>
+    <text x="349" y="917" text-anchor="middle" class="mono" font-size="13" fill="#2F4550">0</text>
+    <text x="438" y="917" text-anchor="middle" class="mono" font-size="13" fill="#D9662A">θ</text>
+    <rect x="72" y="928" width="420" height="32" fill="#FFFFFF"/>
+    <text x="95" y="949" text-anchor="middle" class="mono" font-size="13" fill="#2F4550">3</text>
+    <text x="160" y="949" text-anchor="middle" class="mono" font-size="13" fill="#2F4550">−90°</text>
+    <text x="253" y="949" text-anchor="middle" class="mono" font-size="13" fill="#6E56CF">L</text>
+    <text x="349" y="949" text-anchor="middle" class="mono" font-size="13" fill="#2F4550">0</text>
+    <text x="438" y="949" text-anchor="middle" class="mono" font-size="13" fill="#2F4550">0</text>
+    <rect x="72" y="830" width="420" height="130" rx="8" fill="none" stroke="#D8E4EA"/>
+    <line x1="122" y1="830" x2="122" y2="960" stroke="#E1E9EF"/>
+    <line x1="196" y1="830" x2="196" y2="960" stroke="#E1E9EF"/>
+    <line x1="302" y1="830" x2="302" y2="960" stroke="#E1E9EF"/>
+    <line x1="391" y1="830" x2="391" y2="960" stroke="#E1E9EF"/>
+
+    <text x="72" y="982" class="body-small">每行执行 <tspan class="mono" font-size="11">R_x(αᵢ₋₁) · R_z(θᵢ)</tspan>；第 3 行是固定偏置，θ₃ = 0。</text>
+    <text x="72" y="1006" class="card-title"><tspan class="mono" font-size="13">T₀₃ = T₀₁ · T₁₂ · T₂₃</tspan></text>
+    <text x="72" y="1030" class="body-small">B←J1：<tspan class="mono" font-size="11" fill="#0C7C86">R_z(φ)</tspan>　J1←J2：<tspan class="mono" font-size="11" fill="#D9662A">R_x(90°)R_z(θ)</tspan>　J2←G：<tspan class="mono" font-size="11" fill="#6E56CF">R_x(−90°)</tspan></text>
+    <text x="72" y="1050" class="tiny">l：yaw 轴到 pitch 轴的公垂距离；L：pitch 轴到枪口的固定长度。</text>
+
+    <rect x="520" y="786" width="418" height="249" rx="16" fill="url(#navyPanel)"/>
+    <text x="546" y="813" font-size="10.5" font-weight="700" fill="#72C9CD" letter-spacing="1.2">FORWARD ROTATION</text>
+    <text x="546" y="842" font-size="18" font-weight="700" fill="#FFFFFF"><tspan class="mono">R_G^B = R_z(φ) · R_y(−θ)</tspan></text>
+    <text x="560" y="875" class="mono" font-size="15" fill="#E8F1F4">⎡ <tspan fill="#70D8D8">cφcθ</tspan>   −sφ   −cφsθ ⎤</text>
+    <text x="560" y="900" class="mono" font-size="15" fill="#E8F1F4">⎢ <tspan fill="#70D8D8">sφcθ</tspan>    cφ   −sφsθ ⎥</text>
+    <text x="560" y="925" class="mono" font-size="15" fill="#E8F1F4">⎣ <tspan fill="#70D8D8"> sθ </tspan>     0     cθ  ⎦</text>
+    <line x1="546" y1="945" x2="912" y2="945" stroke="#365568"/>
+    <text x="546" y="969" font-size="12" fill="#A8BCC8">第一列 = 视轴方向（底盘系）</text>
+    <text x="546" y="994" font-size="14" fill="#FFFFFF"><tspan class="mono">v_B = [ cφcθ,  sφcθ,  sθ ]ᵀ</tspan></text>
+    <text x="546" y="1018" font-size="11" fill="#8FB0BF">θ &gt; 0 ⇒ v_z &gt; 0（抬头）；Roll 无对应自由度</text>
+  </g>
+
+  <!-- Section 04: pointing and control -->
+  <g id="pointing-card">
+    <rect x="990" y="710" width="570" height="360" rx="20" fill="#FFFFFF" stroke="#DDE6ED" filter="url(#cardShadow)"/>
+    <text x="1020" y="740" class="section-kicker">04 / POINTING &amp; CONTROL</text>
+    <text x="1020" y="767" class="section-title">目标指向反解与编码器闭环</text>
+    <text x="1020" y="789" class="section-sub">只让视轴 X_G 对准目标；Yaw / Pitch 分别由两个关节角跟随。</text>
+
+    <rect x="1014" y="801" width="522" height="38" rx="10" fill="#EAF6F1" stroke="#CEE8DE"/>
+    <text x="1030" y="825" font-size="12.5" fill="#2E5D4C">世界系目标 <tspan class="mono" font-weight="700">p_W</tspan>　→　底盘系 <tspan class="mono" font-weight="700">p_B = (R_B^W)ᵀ p_W</tspan></text>
+    <text x="1502" y="825" text-anchor="end" font-size="10.5" fill="#668577">单位方向</text>
+
+    <rect x="1014" y="851" width="522" height="99" rx="14" fill="url(#navyPanel)"/>
+    <circle cx="1035" cy="878" r="5" fill="#0C7C86"/>
+    <text x="1048" y="884" font-size="14.5" font-weight="700" fill="#FFFFFF"><tspan class="mono">φ_cmd = atan2(p_y, p_x)</tspan></text>
+    <circle cx="1035" cy="916" r="5" fill="#D9662A"/>
+    <text x="1048" y="922" font-size="14.5" font-weight="700" fill="#FFFFFF"><tspan class="mono">θ_cmd = atan2(p_z, √(p_x² + p_y²))</tspan></text>
+    <text x="1506" y="934" text-anchor="end" font-size="10.5" fill="#8FB0BF">θ ∈ [−90°, 90°]</text>
+
+    <rect x="1014" y="966" width="252" height="32" rx="9" fill="#FFF7EF" stroke="#F0DCC8"/>
+    <text x="1028" y="987" font-size="11.5" fill="#8A5B30">θ 限位：<tspan class="mono">clip(θ, θmin, θmax)</tspan></text>
+    <rect x="1284" y="966" width="252" height="32" rx="9" fill="#F3F7FA" stroke="#DDE6ED"/>
+    <text x="1298" y="987" font-size="11.5" fill="#526C7B">近天顶 / 天底：保持上一周期 φ</text>
+
+    <text x="1014" y="1019" font-size="10.5" font-weight="700" fill="#78909F" letter-spacing="1">ENCODER CASCADE</text>
+    <rect x="1014" y="1027" width="104" height="31" rx="8" fill="#E9F4F5" stroke="#BFDCDE"/>
+    <text x="1066" y="1047" text-anchor="middle" font-size="11.5" font-weight="700" fill="#0C7C86">角度环</text>
+    <line x1="1118" y1="1042.5" x2="1137" y2="1042.5" stroke="#8AA3B0" stroke-width="1.4" marker-end="url(#arrowDark)"/>
+    <rect x="1143" y="1027" width="104" height="31" rx="8" fill="#F5F8FA" stroke="#D8E3E9"/>
+    <text x="1195" y="1047" text-anchor="middle" font-size="11.5" font-weight="700" fill="#405D6D">速度环</text>
+    <line x1="1247" y1="1042.5" x2="1266" y2="1042.5" stroke="#8AA3B0" stroke-width="1.4" marker-end="url(#arrowDark)"/>
+    <rect x="1272" y="1027" width="104" height="31" rx="8" fill="#FDF5F0" stroke="#EFD4C5"/>
+    <text x="1324" y="1047" text-anchor="middle" font-size="11.5" font-weight="700" fill="#B95A29">两轴电机</text>
+    <line x1="1376" y1="1042.5" x2="1395" y2="1042.5" stroke="#8AA3B0" stroke-width="1.4" marker-end="url(#arrowDark)"/>
+    <rect x="1401" y="1027" width="107" height="31" rx="8" fill="#F2F5FD" stroke="#D7DDF2"/>
+    <text x="1454" y="1047" text-anchor="middle" font-size="11.5" font-weight="700" fill="#5E56A8">编码器</text>
+    <text x="1014" y="1067" class="tiny">φ 误差 wrap 到 (−180°, 180°]；θ 误差不 wrap。底盘 IMU 角速度可投影到关节轴作前馈。</text>
+  </g>
+
+  <text x="800" y="1100" text-anchor="middle" font-size="10.5" fill="#8295A2">依据：LibSE/Module/Gimbal/gimbal.md · 二轴云台只有 2 个姿态自由度，控制对象是视轴方向而非完整姿态</text>
+</svg>

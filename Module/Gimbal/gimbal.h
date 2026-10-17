@@ -29,11 +29,24 @@ typedef enum {
     GIMBAL_AXIS_COUNT
 } GimbalAxis_t;
 
+/* DH 坐标系：两个关节坐标系 + 末端云台坐标系（固定，不对应关节） */
+typedef enum {
+    GIMBAL_FRAME_YAW = 0,   ///< {J1}：z 沿 yaw 轴
+    GIMBAL_FRAME_PITCH,     ///< {J2}：z 沿 pitch 轴，x 沿枪管
+    GIMBAL_FRAME_END,       ///< {G}：末端云台系，X 前 Y 左 Z 上，与 IMU 对齐
+    GIMBAL_FRAME_COUNT
+} GimbalFrame_t;
+
 /*--------------------------------------物理模型--------------------------------------*/
+/* DH 表按 gimbal.md 填写（改进 DH），旋转部分须满足 R03 = Rz(yaw) * Ry(-pitch)：
+ * yaw   | α=0   | a=0  | d=0 | θ=faiz
+ * pitch | α=90  | a=-l | d=0 | θ=theta
+ * end   | α=-90 | a=L  | d=0 | θ=0
+ * 质量参数只属于两个运动连杆，连杆 i 的质心表示在关节坐标系 i 下 */
 typedef struct {
-    DH_Param_t dh[GIMBAL_AXIS_COUNT];           ///< DH 参数表，顺序 yaw -> pitch
+    DH_Param_t dh[GIMBAL_FRAME_COUNT];          ///< DH 参数表，顺序 yaw -> pitch -> end
     float mass_kg[GIMBAL_AXIS_COUNT];
-    float com_m[GIMBAL_AXIS_COUNT][3];          ///< 质心在连杆坐标系下的位置 [x, y, z]
+    float com_m[GIMBAL_AXIS_COUNT][3];          ///< 质心在关节坐标系下的位置 [x, y, z]
 } GimbalModel_t;
 
 /*--------------------------------------输入层--------------------------------------*/
@@ -62,16 +75,20 @@ typedef struct {
     float joint_deg[GIMBAL_AXIS_COUNT];         ///< 编码器关节角，方向按 motor->inverse 折算
     float joint_omega_dps[GIMBAL_AXIS_COUNT];   ///< 编码器关节角速度（相对底盘）
     float gimbal_to_world[3][3];                ///< 末端 -> 世界，由 INS 欧拉角构造
-    float gimbal_to_base[3][3];                 ///< 末端 -> 底盘，由关节角构造
+    float gimbal_to_base[3][3];                 ///< 末端 -> 底盘，由 DH 正运动学构造
     float base_to_world[3][3];                  ///< 底盘 -> 世界，由前两者反解
+    float world_to_base[3][3];                  ///< base_to_world 的转置，用于把目标投到底盘系
     uint8_t valid;                              ///< INS 就绪且本周期取到数据
 } GimbalObserver_t;
 
 /*--------------------------------------控制层--------------------------------------*/
+/* D 项按每周期误差增量计算：kd * Δe（dt 并入 kd），
+ * d_alpha 为 D 项一阶低通系数 [0, 1)，0 即不滤波 */
 typedef struct {
     float kp;
     float ki;
     float kd;
+    float d_alpha;
     float sum_error_max;
     float output_max;
 } GimbalPIDParam_t;
@@ -88,6 +105,8 @@ typedef struct {
 typedef struct {
     PIDStruct angle_pid;
     PIDStruct speed_pid;
+    float angle_d_alpha;        ///< D 项低通系数，随增益集加载
+    float speed_d_alpha;
     float angle_out_dps;        ///< 角度环输出，分频周期间保持
     float speed_ref_dps;        ///< 角度环输出 + 关节角速度前馈
     float feedforward;          ///< 模型前馈（重力补偿等），暂为 0

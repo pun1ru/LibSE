@@ -4,39 +4,18 @@
 #include <stddef.h>
 #include <string.h>
 
+#include "arm_matrix.h"
+
 #define GIMBAL_HORIZON_MIN      0.02f   /* 指向向量水平投影下限，目标接近天顶时冻结 yaw */
 #define GIMBAL_WORLD_PITCH_MAX  90.0f   /* 世界系 pitch 目标的物理范围 */
 #define GIMBAL_YAW_WRAP_DEG     180.0f  /* yaw 角度归一化到 [-180, 180] */
 
 /*--------------------------------------旋转矩阵工具--------------------------------------*/
-/* out = a * b^T */
-static void Gimbal_MatMulTrans(const float a[3][3], const float b[3][3], float out[3][3])
+/* 行优先 3x3 数组包成 CMSIS-DSP 矩阵实例，不拷贝数据
+ * arm_mat_init_f32 的 pData 不带 const，作源矩阵时库内只读 */
+static void Gimbal_MatWrap(matrix_t *mat, const float m[3][3])
 {
-    for (uint8_t i = 0U; i < 3U; ++i)
-    {
-        for (uint8_t j = 0U; j < 3U; ++j)
-        {
-            out[i][j] = a[i][0] * b[j][0] + a[i][1] * b[j][1] + a[i][2] * b[j][2];
-        }
-    }
-}
-
-/* out = m * v */
-static void Gimbal_MatVec(const float m[3][3], const float v[3], float out[3])
-{
-    for (uint8_t i = 0U; i < 3U; ++i)
-    {
-        out[i] = m[i][0] * v[0] + m[i][1] * v[1] + m[i][2] * v[2];
-    }
-}
-
-/* out = m^T * v */
-static void Gimbal_MatTransVec(const float m[3][3], const float v[3], float out[3])
-{
-    for (uint8_t i = 0U; i < 3U; ++i)
-    {
-        out[i] = m[0][i] * v[0] + m[1][i] * v[1] + m[2][i] * v[2];
-    }
+    matrix_init(mat, 3, 3, (float *)&m[0][0]);
 }
 
 /* INS 欧拉角 -> 末端到世界的旋转矩阵
@@ -62,23 +41,19 @@ static void Gimbal_EulerToMatrix(const INS_Euler_t *euler, float out[3][3])
     out[2][2] = cp * cr;
 }
 
-/* 关节角 -> 末端到底盘的旋转矩阵 Rz(yaw) * Ry(-pitch)，见 gimbal.md */
-static void Gimbal_JointToMatrix(const float joint_deg[GIMBAL_AXIS_COUNT], float out[3][3])
+/* 关节角 -> 末端到底盘的旋转矩阵：DH 正运动学 T03 = T01 * T12 * T23 取旋转部分
+ * 按 gimbal.md 的参数表结果为 Rz(yaw) * Ry(-pitch)；末端行不对应关节，q 恒为 0 */
+static void Gimbal_JointToMatrix(const GimbalModel_t *model,
+                                 const float joint_deg[GIMBAL_AXIS_COUNT], float out[3][3])
 {
-    float cf = cosf(joint_deg[GIMBAL_YAW] * MOTOR_DEG_TO_RAD);
-    float sf = sinf(joint_deg[GIMBAL_YAW] * MOTOR_DEG_TO_RAD);
-    float ct = cosf(joint_deg[GIMBAL_PITCH] * MOTOR_DEG_TO_RAD);
-    float st = sinf(joint_deg[GIMBAL_PITCH] * MOTOR_DEG_TO_RAD);
+    float q_deg[GIMBAL_FRAME_COUNT] = {joint_deg[GIMBAL_YAW], joint_deg[GIMBAL_PITCH], 0.0f};
+    float T[4][4];
 
-    out[0][0] = cf * ct;
-    out[0][1] = -sf;
-    out[0][2] = -cf * st;
-    out[1][0] = sf * ct;
-    out[1][1] = cf;
-    out[1][2] = -sf * st;
-    out[2][0] = st;
-    out[2][1] = 0.0f;
-    out[2][2] = ct;
+    DH_ForwardKinematics(model->dh, q_deg, GIMBAL_FRAME_COUNT, T);
+    for (uint8_t i = 0U; i < 3U; ++i)
+    {
+        memcpy(out[i], T[i], sizeof(out[i]));
+    }
 }
 
 /* 世界系目标（INS 约定）-> 世界系单位指向向量及其变化率
@@ -137,6 +112,8 @@ static void Gimbal_LoadGain(Gimbal_t *gimbal, const GimbalGainSet_t *gain)
         PIDInitialize(&ctrl->speed_pid, param->speed.kp, param->speed.ki,
                       param->speed.kd, param->speed.sum_error_max,
                       param->speed.output_max);
+        ctrl->angle_d_alpha = param->angle.d_alpha;
+        ctrl->speed_d_alpha = param->speed.d_alpha;
     }
     Gimbal_ResetControl(gimbal);
 }
@@ -189,11 +166,6 @@ static void Gimbal_ApplyOutput(Gimbal_t *gimbal)
 
 void Gimbal_Init(Gimbal_t *gimbal, const GimbalConfig_t *config)
 {
-    if (gimbal == NULL || config == NULL)
-    {
-        return;
-    }
-
     memset(gimbal, 0, sizeof(*gimbal));
     gimbal->model = config->model;
     gimbal->motor[GIMBAL_YAW] = config->yaw_motor;
@@ -212,11 +184,6 @@ void Gimbal_Init(Gimbal_t *gimbal, const GimbalConfig_t *config)
 /*--------------------------------------输入层--------------------------------------*/
 void Gimbal_Input(Gimbal_t *gimbal, const GimbalInput_t *input)
 {
-    if (gimbal == NULL || input == NULL)
-    {
-        return;
-    }
-
     if (input->state != gimbal->state)
     {
         gimbal->state = input->state;
@@ -275,10 +242,20 @@ void Gimbal_Estimate(Gimbal_t *gimbal)
         obs->joint_omega_dps[i] = direction * motor->feedback.omega_rads * MOTOR_RAD_TO_DEG;
     }
 
-    /* 末端 IMU + 编码器反解底盘姿态：base_to_world = gimbal_to_world * gimbal_to_base^T */
     Gimbal_EulerToMatrix(&euler, obs->gimbal_to_world);
-    Gimbal_JointToMatrix(obs->joint_deg, obs->gimbal_to_base);
-    Gimbal_MatMulTrans(obs->gimbal_to_world, obs->gimbal_to_base, obs->base_to_world);
+    Gimbal_JointToMatrix(&gimbal->model, obs->joint_deg, obs->gimbal_to_base);
+
+    /* 末端 IMU + 编码器反解底盘姿态：base_to_world = gimbal_to_world * gimbal_to_base^T */
+    float base_to_gimbal[3][3];
+    matrix_t g2w, g2b, b2g, b2w, w2b;
+    Gimbal_MatWrap(&g2w, obs->gimbal_to_world);
+    Gimbal_MatWrap(&g2b, obs->gimbal_to_base);
+    Gimbal_MatWrap(&b2g, base_to_gimbal);
+    Gimbal_MatWrap(&b2w, obs->base_to_world);
+    Gimbal_MatWrap(&w2b, obs->world_to_base);
+    matrix_trans(&g2b, &b2g);
+    matrix_mult(&g2w, &b2g, &b2w);
+    matrix_trans(&b2w, &w2b);
     obs->valid = 1U;
 }
 
@@ -294,9 +271,11 @@ static void Gimbal_SolveJoint(Gimbal_t *gimbal)
     float dir_base[3];
     float rate_base[3];
 
+    matrix_t w2b;
+    Gimbal_MatWrap(&w2b, obs->world_to_base);
     Gimbal_TargetToWorld(&gimbal->target, dir_world, rate_world);
-    Gimbal_MatTransVec(obs->base_to_world, dir_world, dir_base);
-    Gimbal_MatTransVec(obs->base_to_world, rate_world, rate_base);
+    matrix_vec_mult(&w2b, dir_world, dir_base);
+    matrix_vec_mult(&w2b, rate_world, rate_base);
 
     float horizon_sq = dir_base[0] * dir_base[0] + dir_base[1] * dir_base[1];
     float horizon = sqrtf(horizon_sq);
@@ -322,11 +301,13 @@ static void Gimbal_SolveJoint(Gimbal_t *gimbal)
         float reach_matrix[3][3];
         float reach_base[3];
         float reach_world[3];
-        Gimbal_JointToMatrix(ref->angle_deg, reach_matrix);
+        matrix_t b2w;
+        Gimbal_JointToMatrix(&gimbal->model, ref->angle_deg, reach_matrix);
         reach_base[0] = reach_matrix[0][0];
         reach_base[1] = reach_matrix[1][0];
         reach_base[2] = reach_matrix[2][0];
-        Gimbal_MatVec(obs->base_to_world, reach_base, reach_world);
+        Gimbal_MatWrap(&b2w, obs->base_to_world);
+        matrix_vec_mult(&b2w, reach_base, reach_world);
         Gimbal_WorldToTarget(reach_world, &gimbal->target);
         ref->omega_dps[GIMBAL_PITCH] = 0.0f;
     }
@@ -336,7 +317,8 @@ static void Gimbal_SolveJoint(Gimbal_t *gimbal)
 /* 外环（分频）：关节角误差 deg -> 关节角速度 deg/s，结果保持到下次执行 */
 static void Gimbal_AngleLoop(GimbalAxisCtrl_t *ctrl, float angle_error_deg)
 {
-    ctrl->angle_out_dps = PIDUpdate(&ctrl->angle_pid, angle_error_deg);
+    ctrl->angle_out_dps = PIDUpdateWithFilteredD(&ctrl->angle_pid, angle_error_deg,
+                                                 ctrl->angle_d_alpha);
 }
 
 /* 内环（每周期）：角度环输出 + 关节角速度前馈 -> 速度环 + 模型前馈 */
@@ -345,8 +327,9 @@ static void Gimbal_SpeedLoop(GimbalAxisCtrl_t *ctrl, float ref_omega_dps,
 {
     ctrl->speed_ref_dps = ctrl->angle_out_dps + ref_omega_dps;
     ctrl->feedforward = 0.0f;   /* TODO: 由 model 计算重力/惯量前馈 */
-    ctrl->output = AbsLimiter(PIDUpdate(&ctrl->speed_pid,
-                                        ctrl->speed_ref_dps - omega_dps) +
+    ctrl->output = AbsLimiter(PIDUpdateWithFilteredD(&ctrl->speed_pid,
+                                                     ctrl->speed_ref_dps - omega_dps,
+                                                     ctrl->speed_d_alpha) +
                               ctrl->feedforward,
                               ctrl->speed_pid.output_max);
 }
