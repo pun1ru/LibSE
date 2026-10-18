@@ -25,16 +25,20 @@
 
 typedef struct {
     float current_per_lsb;      /* iq 的 A/LSB，MG 66/4096，MF 33/4096 */
-    float torque_constant;      /* 选型册的扭矩常数 N*m/A，见下方说明 */
+    float torque_constant;      /* 电流到力矩的系数 N*m/A，直接使用，不再乘减速比 */
     float gear_ratio;
+    float iq_per_nm;            /* 1 N*m 对应的 iq 原始值，力矩模式用它换算 */
 } LKModelParam_t;
 
-/* MG6012E-i8：Kt 1.09 N*m/A，减速比 8:1
- * 选型册里 Kt 是否已折算到输出轴、各型号口径是否一致没有说明，
- * 同册的额定扭矩 6 N*m / 额定电流 3.5 A 约 1.7 与它也对不上，用于力矩换算前先实测核对 */
+#define LK_IQ_PER_NM(torque_constant, current_per_lsb) (1.0f / ((torque_constant) * (current_per_lsb)))
+#define LK_MG6012E_I8_TORQUE_CONSTANT 1.09f
+
+/* 取选型册印的 1.09，换算口径同 serialleg2027（一个固定的 iq / N*m，不乘减速比）
+ * 按册内其他数据推算转子端 Kt 约 0.22，乘减速比 8 约 1.75，与 1.09 不一致，实际输出力矩以实测为准 */
 static const LKModelParam_t lkModelParams[LK_MODEL_COUNT] =
 {
-    [LK_MG6012E_I8] = {LK_MG_CURRENT_PER_LSB, 1.09f, 8.0f},
+    [LK_MG6012E_I8] = {LK_MG_CURRENT_PER_LSB, LK_MG6012E_I8_TORQUE_CONSTANT, 8.0f,
+                       LK_IQ_PER_NM(LK_MG6012E_I8_TORQUE_CONSTANT, LK_MG_CURRENT_PER_LSB)},
 };
 
 static uint16_t LKMotor_ReadU16(const uint8_t *data)
@@ -141,13 +145,19 @@ void LKMotor_SendCommand(LKMotor_t *motor)
     switch (command->control_mode)
     {
     case MODE_CURRENT:
-        setpoint = (int32_t)LKMotor_Limit(motor->base.inverse ?
-                                        -command->current : command->current,
-                                        LK_IQ_COMMAND_LIMIT);
+    case MODE_TORQUE:
+    {
+        /* 力矩模式：N*m 按 iq_per_nm 换成 iq，之后与电流模式同一路径 */
+        float iq = command->control_mode == MODE_TORQUE ?
+                   command->torque * lkModelParams[motor->motor_config.model].iq_per_nm :
+                   command->current;
+        setpoint = (int32_t)LKMotor_Limit(motor->base.inverse ? -iq : iq,
+                                          LK_IQ_COMMAND_LIMIT);
         data[0] = LK_CMD_IQ_CONTROL;
         data[4] = (uint8_t)setpoint;
         data[5] = (uint8_t)((uint32_t)setpoint >> 8);
         break;
+    }
     case MODE_VELOCITY:
         /* velocity: rad/s -> 0.01 dps/LSB */
         setpoint = (int32_t)(command->velocity * MOTOR_RAD_TO_DEG *

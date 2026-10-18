@@ -80,7 +80,7 @@ struct Motor_t{
     uint16_t zero_point;                // 人为标定的原始编码器零点
     bool inverse;                       // 反转电流或力矩命令方向
     float gear_ratio;                   // 减速比 = 转子转速 / 输出轴转速，无减速箱为 1，由各电机驱动填写
-    float torque_constant;              // 电流到输出轴力矩的系数 N*m/A，0 表示该驱动不提供
+    float torque_constant;              // 电流到力矩的系数 N*m/A，口径见各驱动，0 表示该驱动不提供
 };
 
 /* 基类构造：子类 Init 在 memset 之后调用，再填写各自的 motorops */
