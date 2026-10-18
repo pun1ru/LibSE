@@ -167,12 +167,7 @@ void Gimbal_Input(Gimbal_t *gimbal, const GimbalInput_t *input)
 }
 
 /*--------------------------------------估计层--------------------------------------*/
-/* 电机 inverse 只翻转指令，反馈在这里按同一方向折算成关节角 */
-static float Gimbal_MotorDirection(const Motor_t *motor)
-{
-    return motor->inverse ? -1.0f : 1.0f;
-}
-
+/* 电机 inverse 由驱动只翻转指令，反馈在这里按同一方向折算成关节角 */
 void Gimbal_Estimate(Gimbal_t *gimbal)
 {
     GimbalObserver_t *obs = &gimbal->observer;
@@ -187,16 +182,16 @@ void Gimbal_Estimate(Gimbal_t *gimbal)
     for (uint8_t i = 0U; i < GIMBAL_AXIS_COUNT; ++i)
     {
         const Motor_t *motor = gimbal->motor[i];
-        float direction = Gimbal_MotorDirection(motor);
+        float direction = Motor_Direction(motor);
         obs->joint_deg[i] = direction * motor->feedback.abs_angle_deg;
         obs->joint_omega_dps[i] = direction * motor->feedback.omega_rads * MOTOR_RAD_TO_DEG;
     }
 
-    const float quat_flu[4] = {quat[0], quat[1], -quat[2], -quat[3]};
-    Quat_ToMatrix(quat_flu, obs->gimbal_to_world);
+    /* INS 四元数是 {G}（X 前 Y 右 Z 下）到世界（Z 向上）的旋转，直接构造 gimbal_to_world */
+    Quat_ToMatrix(quat, obs->gimbal_to_world);
 
     /* 关节角 -> 末端到底盘的旋转矩阵：DH 正运动学 T03 = T01 * T12 * T23 取旋转部分
-     * 按 gimbal.md 的参数表结果为 Rz(yaw) * Ry(-pitch)；末端行不对应关节，q 恒为 0 */
+     * 按 gimbal.md 的参数表结果为 Rz(yaw) * Ry(-pitch) * Rx(180°)；末端行不对应关节，q 恒为 0 */
     const float q_deg[GIMBAL_FRAME_COUNT] = {obs->joint_deg[GIMBAL_YAW],
                                              obs->joint_deg[GIMBAL_PITCH], 0.0f};
     float T[4][4];
@@ -320,5 +315,25 @@ void Gimbal_Control(Gimbal_t *gimbal)
     }
     Gimbal_SpeedLoop(yaw, ref->omega_dps[GIMBAL_YAW], obs->joint_omega_dps[GIMBAL_YAW]);
     Gimbal_SpeedLoop(pitch, ref->omega_dps[GIMBAL_PITCH], obs->joint_omega_dps[GIMBAL_PITCH]);
+    Gimbal_ApplyOutput(gimbal);
+}
+
+void Gimbal_ControlOpenLoop(Gimbal_t *gimbal, const float output[GIMBAL_AXIS_COUNT])
+{
+    const GimbalObserver_t *obs = &gimbal->observer;
+
+    /* 不跑 PID，清空状态并让目标跟随当前世界指向，切回闭环时不跳变 */
+    Gimbal_ResetControl(gimbal);
+    if (obs->valid != 0U)
+    {
+        gimbal->target.pitch_deg = obs->pitch_deg;
+        gimbal->target.yaw_deg = obs->yaw_deg;
+    }
+    gimbal->target.pitch_omega_dps = 0.0f;
+    gimbal->target.yaw_omega_dps = 0.0f;
+    for (uint8_t i = 0U; i < GIMBAL_AXIS_COUNT; ++i)
+    {
+        gimbal->controller.axis[i].output = output[i];
+    }
     Gimbal_ApplyOutput(gimbal);
 }

@@ -28,6 +28,7 @@ void GimbalAmmoState_Update(GimbalAmmoState_t *state, const DT7CmdData *command,
 {
     output->yaw_omega_dps = 0.0f;
     output->pitch_omega_dps = 0.0f;
+    output->wheel = 0.0f;
 
     if (command == NULL)
     {
@@ -49,6 +50,7 @@ void GimbalAmmoState_Update(GimbalAmmoState_t *state, const DT7CmdData *command,
     float stick_pitch = (float)command->ch3 / DT7_RC_CH_MAX_RELATIVE;
     output->yaw_omega_dps = stick_yaw * gain->yaw_rate_dps;
     output->pitch_omega_dps = stick_pitch * gain->pitch_rate_dps;
+    output->wheel = (float)command->ch4 / DT7_RC_CH_MAX_RELATIVE;
 }
 
 void GimbalAmmoState_Apply(Gimbal_t *gimbal, const GimbalAmmoCmd_t *cmd, float period_s)

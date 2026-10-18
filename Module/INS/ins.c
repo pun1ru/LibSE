@@ -6,14 +6,21 @@
 #include <stddef.h>
 #include <string.h>
 //温控还没上
-void INS_Init(INS_t *ins, float beta)
+void INS_Init(INS_t *ins, float beta, const float mount[3][3])
 {
-    if (ins == NULL) {
+    if (ins == NULL || mount == NULL) {
         return;
     }
 
     memset(ins, 0, sizeof(*ins));
+    memcpy(ins->mount, mount, sizeof(ins->mount));
     MadgwickAHRS_Init(&ins->attitude, beta);
+    /* 机体系是 X 前 Y 右 Z 下，世界系 Z 向上，水平静止时机体到世界是绕 X 轴 180°，即 [0, 1, 0, 0]。
+     * 默认的单位四元数与它正好差 180°，落在梯度下降的鞍点上，加速度修正几乎为 0，姿态收敛不了 */
+    ins->attitude.q[0] = 0.0f;
+    ins->attitude.q[1] = 1.0f;
+    ins->attitude.q[2] = 0.0f;
+    ins->attitude.q[3] = 0.0f;
     ins->init_status = BMI088_init();
     ins->ready = (ins->init_status == BMI088_NO_ERROR) ? 1U : 0U;
 }
@@ -28,9 +35,20 @@ void INS_Update(INS_t *ins, float dt)
     int16_t raw_accel[3] = {0};
     int16_t raw_temp = 0;
     BMI088_read(raw_gyro, raw_accel, &raw_temp);
+    float gyro_sensor[3];
+    float accel_sensor[3];
     for (uint8_t i = 0U; i < 3U; ++i) {
-        ins->gyro[i] = (float)raw_gyro[i] * BMI088_GYRO_SEN;
-        ins->accel[i] = (float)raw_accel[i] * BMI088_ACCEL_SEN;
+        gyro_sensor[i] = (float)raw_gyro[i] * BMI088_GYRO_SEN;
+        accel_sensor[i] = (float)raw_accel[i] * BMI088_ACCEL_SEN;
+    }
+    /* 陀螺与加速度计必须用同一个安装矩阵，转到机体系后再进滤波器 */
+    for (uint8_t i = 0U; i < 3U; ++i) {
+        ins->gyro[i] = ins->mount[i][0] * gyro_sensor[0] +
+                       ins->mount[i][1] * gyro_sensor[1] +
+                       ins->mount[i][2] * gyro_sensor[2];
+        ins->accel[i] = ins->mount[i][0] * accel_sensor[0] +
+                        ins->mount[i][1] * accel_sensor[1] +
+                        ins->mount[i][2] * accel_sensor[2];
     }
     ins->temperature = (float)raw_temp * BMI088_TEMP_FACTOR + BMI088_TEMP_OFFSET;
     MadgwickAHRS_Update(&ins->attitude, ins->gyro[0], ins->gyro[1],

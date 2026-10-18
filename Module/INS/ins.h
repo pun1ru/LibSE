@@ -13,8 +13,9 @@ typedef struct {
 
 typedef struct {
     MadgwickAHRS_t attitude;
-    float gyro[3];
-    float accel[3];
+    float mount[3][3];      ///< 传感器系 -> 机体系的安装旋转矩阵，v_body = mount * v_sensor
+    float gyro[3];          ///< 机体系角速度 rad/s，已经过 mount
+    float accel[3];         ///< 机体系加速度 m/s^2，已经过 mount
     float temperature;
     uint8_t ready;
     uint8_t init_status;
@@ -25,7 +26,8 @@ typedef struct {
     float gyro_snapshot[3]; ///< 与 euler 同一时刻的机体角速度 rad/s
 } INS_t;
 
-void INS_Init(INS_t *ins, float beta);
+/* mount 必须是纯旋转矩阵（行列式 +1），第 i 行是机体第 i 轴在传感器系里的单位向量 */
+void INS_Init(INS_t *ins, float beta, const float mount[3][3]);
 void INS_Update(INS_t *ins, float dt);
 
 /* 外部只读接口：拷贝一份当前欧拉角，INS 未就绪时返回 0 且不写 euler */

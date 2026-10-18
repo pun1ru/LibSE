@@ -97,22 +97,22 @@
 <line x1="75.4" y1="-295.9" x2="129.3" y2="-307.5" stroke="#d4521a" stroke-width="2.2"/>
 <polygon points="135.2,-308.8 126.3,-302.8 124.6,-310.6" fill="#d4521a" opacity="1"/>
 <text x="144.0" y="-305.7" text-anchor="start" font-size="13" fill="#d4521a" font-weight="600">X<tspan dy="3" font-size="10">G</tspan></text>
-<line x1="75.4" y1="-295.9" x2="183.8" y2="-319.3" stroke="#d4521a" stroke-width="2.2"/>
-<polygon points="189.7,-320.6 180.8,-314.6 179.1,-322.4" fill="#d4521a" opacity="1"/>
-<text x="198.5" y="-317.5" text-anchor="start" font-size="13" fill="#d4521a" font-weight="600">Y<tspan dy="3" font-size="10">G</tspan></text>
-<line x1="75.4" y1="-295.9" x2="48.8" y2="-419.0" stroke="#d4521a" stroke-width="2.2"/>
-<polygon points="47.5,-424.9 53.5,-416.0 45.7,-414.3" fill="#d4521a" opacity="1"/>
-<text x="45.6" y="-435.7" text-anchor="middle" font-size="13" fill="#d4521a" font-weight="600">Z<tspan dy="3" font-size="10">G</tspan></text>
+<line x1="75.4" y1="-295.9" x2="-33.0" y2="-272.5" stroke="#d4521a" stroke-width="2.2"/>
+<polygon points="-38.9,-271.2 -30.0,-277.2 -28.3,-269.4" fill="#d4521a" opacity="1"/>
+<text x="-39.0" y="-284.5" text-anchor="middle" font-size="13" fill="#d4521a" font-weight="600">Y<tspan dy="3" font-size="10">G</tspan></text>
+<line x1="75.4" y1="-295.9" x2="102.0" y2="-172.8" stroke="#d4521a" stroke-width="2.2"/>
+<polygon points="103.3,-166.9 97.3,-175.8 105.1,-177.5" fill="#d4521a" opacity="1"/>
+<text x="110.5" y="-169.5" text-anchor="start" font-size="13" fill="#d4521a" font-weight="600">Z<tspan dy="3" font-size="10">G</tspan></text>
 <circle cx="75.4" cy="-295.9" r="4.5" fill="#d4521a"/>
 <line x1="180.4" y1="-423.2" x2="237.0" y2="-459.4" stroke="#2f8f3a" stroke-width="2.2"/>
 <polygon points="242.0,-462.6 235.7,-453.9 231.4,-460.6" fill="#2f8f3a" opacity="1"/>
 <text x="249.6" y="-469.5" text-anchor="start" font-size="13" fill="#2f8f3a" font-weight="600">X<tspan dy="3" font-size="10">T</tspan></text>
-<line x1="180.4" y1="-423.2" x2="266.6" y2="-450.3" stroke="#2f8f3a" stroke-width="2.2"/>
-<polygon points="272.3,-452.1 264.0,-445.3 261.6,-452.9" fill="#2f8f3a" opacity="1"/>
-<text x="280.9" y="-449.8" text-anchor="start" font-size="13" fill="#2f8f3a" font-weight="600">Y<tspan dy="3" font-size="10">T</tspan></text>
-<line x1="180.4" y1="-423.2" x2="136.3" y2="-527.2" stroke="#2f8f3a" stroke-width="2.2"/>
-<polygon points="134.0,-532.8 141.6,-525.1 134.2,-522.0" fill="#2f8f3a" opacity="1"/>
-<text x="130.5" y="-543.0" text-anchor="end" font-size="13" fill="#2f8f3a" font-weight="600">Z<tspan dy="3" font-size="10">T</tspan></text>
+<line x1="180.4" y1="-423.2" x2="94.2" y2="-396.1" stroke="#2f8f3a" stroke-width="2.2"/>
+<polygon points="88.5,-394.3 96.8,-401.1 99.2,-393.5" fill="#2f8f3a" opacity="1"/>
+<text x="79.9" y="-396.6" text-anchor="end" font-size="13" fill="#2f8f3a" font-weight="600">Y<tspan dy="3" font-size="10">T</tspan></text>
+<line x1="180.4" y1="-423.2" x2="224.5" y2="-319.2" stroke="#2f8f3a" stroke-width="2.2"/>
+<polygon points="226.8,-313.6 219.2,-321.3 226.6,-324.4" fill="#2f8f3a" opacity="1"/>
+<text x="230.3" y="-303.4" text-anchor="start" font-size="13" fill="#2f8f3a" font-weight="600">Z<tspan dy="3" font-size="10">T</tspan></text>
 <circle cx="180.4" cy="-423.2" r="4.5" fill="#2f8f3a"/>
 <line x1="-330.3" y1="133.8" x2="-370.3" y2="208.8" stroke="#59707c" stroke-width="1" opacity="0.7"/>
 <text x="-374.3" y="212.8" text-anchor="end" font-size="14" fill="#59707c" font-weight="600">{W} 世界系 NWU</text>
@@ -124,8 +124,8 @@
 <text x="-220.0" y="-301.3" text-anchor="end" font-size="14" fill="#7a4fb0" font-weight="600">{J2} pitch 关节系</text>
 <line x1="75.4" y1="-295.9" x2="145.4" y2="-225.9" stroke="#d4521a" stroke-width="1" opacity="0.7"/>
 <text x="149.4" y="-221.9" text-anchor="start" font-size="14" fill="#d4521a" font-weight="600">{G} 云台末端系</text>
-<line x1="180.4" y1="-423.2" x2="200.4" y2="-373.2" stroke="#2f8f3a" stroke-width="1" opacity="0.7"/>
-<text x="204.4" y="-369.2" text-anchor="start" font-size="14" fill="#2f8f3a" font-weight="600">{T} 目标系</text>
+<line x1="180.4" y1="-423.2" x2="160.4" y2="-473.2" stroke="#2f8f3a" stroke-width="1" opacity="0.7"/>
+<text x="156.4" y="-469.2" text-anchor="end" font-size="14" fill="#2f8f3a" font-weight="600">{T} 目标系</text>
 <line x1="-33.0" y1="-243.9" x2="-233.0" y2="-193.9" stroke="#c98a00" stroke-width="1"/>
 <text x="-229.0" y="-189.9" text-anchor="start" font-size="14" fill="#c98a00" font-weight="600">连杆 1（a1 = −l）</text>
 <line x1="4.7" y1="-280.6" x2="134.7" y2="-180.6" stroke="#c2185b" stroke-width="1"/>
@@ -144,7 +144,7 @@
 <text x="-453.6" y="334.8" text-anchor="start" font-size="13" fill="#16252e" >DH 约定：原点在 pitch 轴上，Z 沿 pitch 转轴（=−Y_J1），X 沿连杆（枪管方向）；绕 Z 正转为抬头 θ>0</text>
 <rect x="-629.6" y="355.8" width="16" height="4" fill="#d4521a"/>
 <text x="-603.6" y="360.8" text-anchor="start" font-size="14" fill="#d4521a" font-weight="600">{G} 云台末端系</text>
-<text x="-453.6" y="360.8" text-anchor="start" font-size="13" fill="#16252e" >原点在枪口，X 为视轴，Y 向左，Z 向上；与 {J2} 差一个固定旋转（X_G=X_J2，Y_G=−Z_J2，Z_G=Y_J2）</text>
+<text x="-453.6" y="360.8" text-anchor="start" font-size="13" fill="#16252e" >原点在枪口，X 为视轴，Y 向右，Z 向下；与 {J2} 差一个固定旋转（X_G=X_J2，Y_G=Z_J2，Z_G=−Y_J2）</text>
 <rect x="-629.6" y="381.8" width="16" height="4" fill="#2f8f3a"/>
 <text x="-603.6" y="386.8" text-anchor="start" font-size="14" fill="#2f8f3a" font-weight="600">{T} 目标系</text>
 <text x="-453.6" y="386.8" text-anchor="start" font-size="13" fill="#16252e" >X 轴为希望云台指向的方向；其 Y、Z（含 Roll）二轴云台无法控制</text>
@@ -157,6 +157,6 @@
 <text x="-629.6" y="472.8" text-anchor="start" font-size="14" fill="#16252e" font-weight="600">DH 参数表（改进 DH，α(i−1), a(i−1), d(i), θ(i)）</text>
 <text x="-617.6" y="496.8" text-anchor="start" font-size="13" fill="#16252e" xml:space="preserve">i=1:   0,     0,    0,   ψ</text>
 <text x="-617.6" y="520.8" text-anchor="start" font-size="13" fill="#16252e" xml:space="preserve">i=2:   90°,   −l,   0,   θ</text>
-<text x="-617.6" y="544.8" text-anchor="start" font-size="13" fill="#16252e" xml:space="preserve">i=3:   −90°,  L,    0,   0（固定变换，{J2}→{G}）</text>
-<text x="-629.6" y="574.8" text-anchor="start" font-size="13" fill="#16252e" >R_G^B = Rz(ψ)·Ry(−θ)</text>
+<text x="-617.6" y="544.8" text-anchor="start" font-size="13" fill="#16252e" xml:space="preserve">i=3:   90°,   L,    0,   0（固定变换，{J2}→{G}）</text>
+<text x="-629.6" y="574.8" text-anchor="start" font-size="13" fill="#16252e" >R_G^B = Rz(ψ)·Ry(−θ)·Rx(180°)</text>
 </svg>

@@ -11,7 +11,7 @@
 
 /* 角度统一 deg，角速度 deg/s
  * 每个控制周期依次调用：Gimbal_Input -> Gimbal_Estimate -> Gimbal_Control
- * 坐标系与关节角定义见 gimbal.md：底盘系与末端系均为 X 前、Y 左、Z 上
+ * 坐标系与关节角定义见 gimbal.md：底盘系 X 前、Y 左、Z 上，末端系 X 前、Y 右、Z 下
  * 世界系目标与观测沿用 INS 约定：yaw 顺时针为正，pitch 抬头为正
  * 关节角：yaw 绕底盘 Z 轴逆时针为正，pitch 抬头为正，零位时枪管水平朝底盘正前方
  */
@@ -33,15 +33,15 @@ typedef enum {
 typedef enum {
     GIMBAL_FRAME_YAW = 0,   ///< {J1}：z 沿 yaw 轴
     GIMBAL_FRAME_PITCH,     ///< {J2}：z 沿 pitch 轴，x 沿枪管
-    GIMBAL_FRAME_END,       ///< {G}：末端云台系，X 前 Y 左 Z 上，与 IMU 对齐
+    GIMBAL_FRAME_END,       ///< {G}：末端云台系，X 前 Y 右 Z 下，与 IMU 对齐
     GIMBAL_FRAME_COUNT
 } GimbalFrame_t;
 
 /*--------------------------------------物理模型--------------------------------------*/
-/* DH 表按 gimbal.md 填写（改进 DH），旋转部分须满足 R03 = Rz(yaw) * Ry(-pitch)：
+/* DH 表按 gimbal.md 填写（改进 DH），旋转部分须满足 R03 = Rz(yaw) * Ry(-pitch) * Rx(180°)：
  * yaw   | α=0   | a=0  | d=0 | θ=faiz
  * pitch | α=90  | a=-l | d=0 | θ=theta
- * end   | α=-90 | a=L  | d=0 | θ=0
+ * end   | α=90  | a=L  | d=0 | θ=0
  * 质量参数只属于两个运动连杆，连杆 i 的质心表示在关节坐标系 i 下 */
 typedef struct {
     DH_Param_t dh[GIMBAL_FRAME_COUNT];          ///< DH 参数表，顺序 yaw -> pitch -> end
@@ -162,5 +162,8 @@ void Gimbal_Estimate(Gimbal_t *gimbal);
  * 调用频率即速度环频率，角度环按 angle_loop_div 分频；
  * 角度环 PID 参数按分频后的周期整定 */
 void Gimbal_Control(Gimbal_t *gimbal);
+/* 开环调试：不跑逆解和 PID，output[轴] 按电机当前控制模式直接写进指令（力矩模式为 N*m）并发送；
+ * 每个周期都要调用，保护或不想出力时传全 0。PID 状态每次清空，切回 Gimbal_Control 时不带旧积分 */
+void Gimbal_ControlOpenLoop(Gimbal_t *gimbal, const float output[GIMBAL_AXIS_COUNT]);
 
 #endif

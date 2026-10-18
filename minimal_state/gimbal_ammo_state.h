@@ -25,6 +25,7 @@ typedef struct {
     GimbalState_t gimbal_state;
     float yaw_omega_dps;
     float pitch_omega_dps;
+    float wheel;            /* 遥控器 ch4 归一化到 [-1, 1]，离线或保护时为 0，供开环力矩测试用 */
 } GimbalAmmoCmd_t;
 
 typedef struct {

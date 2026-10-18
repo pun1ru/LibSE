@@ -78,10 +78,16 @@ struct Motor_t{
     MotorOps_t motorops;
     FDCAN_HandleTypeDef *can;           // 电机所在 CAN 总线
     uint16_t zero_point;                // 人为标定的原始编码器零点
-    bool inverse;                       // 反转电流或力矩命令方向
+    bool inverse;                       // 反转电流或力矩命令方向；反馈保持原始方向，由使用方（云台）按此标志折算
     float gear_ratio;                   // 减速比 = 转子转速 / 输出轴转速，无减速箱为 1，由各电机驱动填写
     float torque_constant;              // 电流到力矩的系数 N*m/A，口径见各驱动，0 表示该驱动不提供
 };
+
+/* inverse 对应的方向系数 ±1，使用方用它把反馈折算到与指令同向 */
+static inline float Motor_Direction(const Motor_t *motor)
+{
+    return motor->inverse ? -1.0f : 1.0f;
+}
 
 /* 基类构造：子类 Init 在 memset 之后调用，再填写各自的 motorops */
 void Motor_BaseInit(Motor_t *motor, FDCAN_HandleTypeDef *can,

@@ -1,6 +1,11 @@
 # 二轴云台指向控制
 参考：https://zhuanlan.zhihu.com/p/1988696935104811632
 ## 末端姿态角到关节角的求解
+
+首先默认末端imu系x轴朝向前方,z轴朝向地下的右手坐标系,即pitch向上方为正,从上向yaw轴看顺时针旋转为正,对应的解算初始化四元数也得改成对应z轴朝下方向,然后在gimbal对电机关节角进行处理,Yaw电机默认z轴向上,Pitch电机默认z轴向外侧,由此规定关节角旋转的正负,然后对电机旋转方向进行处理,输出正力矩应该绕关节轴逆时针转动,以此为规定,在motor初始化时,对电机的正反方向进行处理,使得电机输出正力矩时,关节角按照规定的正负方向旋转
+
+老云台:定义pitch关节角取反,yaw关节角不取反,pitch电机输出取反,yaw输出不取反
+
 定义世界坐标系，底盘坐标系，云台坐标系，末端姿态坐标系
 
 关节坐标系1：yaw轴为z轴，原点在yaw轴上、pitch轴的高度，x轴与底盘坐标系平行（faiz=0时与底盘系重合）
@@ -18,7 +23,7 @@ dh参数表
 i | αi-1 | ai-1 | di | θi
 1 | 0 | 0 | 0 | faiz
 2 | 90° | -l | 0 | theta
-3 | -90° | L | 0 | 0
+3 | 90° | L | 0 | 0
 
 可得到基座到末端的变换矩阵
 T03 = T01 * T12 * T23
@@ -56,35 +61,35 @@ s_\theta & c_\theta & 0
 $$
 
 $$
-{}^{2}_{3}R = R_x(-90^\circ)\,R_z(0) =
+{}^{2}_{3}R = R_x(90^\circ)\,R_z(0) =
 \begin{bmatrix}
 1 & 0 & 0\\
-0 & 0 & 1\\
-0 & -1 & 0
+0 & 0 & -1\\
+0 & 1 & 0
 \end{bmatrix}
 $$
 
 **3. 连乘得到**
 
 $$
-{}^{1}_{3}R = {}^{1}_{2}R\,{}^{2}_{3}R = R_y(-\theta) =
+{}^{1}_{3}R = {}^{1}_{2}R\,{}^{2}_{3}R = R_y(-\theta)\,R_x(180^\circ) =
 \begin{bmatrix}
-c_\theta & 0 & -s_\theta\\
-0 & 1 & 0\\
-s_\theta & 0 & c_\theta
+c_\theta & 0 & s_\theta\\
+0 & -1 & 0\\
+s_\theta & 0 & -c_\theta
 \end{bmatrix}
 $$
 
 $$
-{}^{0}_{3}R = {}^{0}_{1}R\,{}^{1}_{2}R\,{}^{2}_{3}R = R_z(\varphi)\,R_y(-\theta) =
+{}^{0}_{3}R = {}^{0}_{1}R\,{}^{1}_{2}R\,{}^{2}_{3}R = R_z(\varphi)\,R_y(-\theta)\,R_x(180^\circ) =
 \begin{bmatrix}
-c_\varphi c_\theta & -s_\varphi & -c_\varphi s_\theta\\
-s_\varphi c_\theta & c_\varphi & -s_\varphi s_\theta\\
-s_\theta & 0 & c_\theta
+c_\varphi c_\theta & s_\varphi & c_\varphi s_\theta\\
+s_\varphi c_\theta & -c_\varphi & s_\varphi s_\theta\\
+s_\theta & 0 & -c_\theta
 \end{bmatrix}
 $$
 
-${}^{0}_{3}R$ 的第一列 $[c_\varphi c_\theta,\ s_\varphi c_\theta,\ s_\theta]^T$ 是视轴在底盘系下的方向，$\theta>0$ 时 z 分量为正，即抬头。
+${}^{0}_{3}R$ 的第一列 $[c_\varphi c_\theta,\ s_\varphi c_\theta,\ s_\theta]^T$ 是视轴在底盘系下的方向，$\theta>0$ 时 z 分量为正，即抬头。末端系 Y 向右、Z 向下，所以第二、三列相对 $R_z(\varphi)\,R_y(-\theta)$ 整体变号（右乘 $R_x(180^\circ)$），视轴列不变。
 
 **4. 两个 IMU 与关节角之间的关系**
 
