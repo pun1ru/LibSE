@@ -3,13 +3,14 @@
 
 #include <stdint.h>
 
-#define MONITOR_TASK_COUNT 4U
+#define MONITOR_TASK_COUNT 5U
 
 typedef enum {
     MONITOR_TASK_RECEIVE = 0U,
     MONITOR_TASK_TRANSMIT = 1U,
     MONITOR_TASK_INS = 2U,
-    MONITOR_TASK_GIMBAL = 3U
+    MONITOR_TASK_GIMBAL = 3U,
+    MONITOR_TASK_STATE = 4U
 } MonitorTaskId_t;
 
 typedef struct {
