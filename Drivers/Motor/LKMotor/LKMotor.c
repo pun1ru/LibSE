@@ -23,10 +23,19 @@
 #define LK_ERROR_COMM_LOST         (1U << 7U)
 #define LK_MOTOR_OFF_STATE         0x10U
 
-static float LKMotor_CurrentPerLsb(LKMotorType_t model_type)
+typedef struct {
+    float current_per_lsb;      /* iq 的 A/LSB，MG 66/4096，MF 33/4096 */
+    float torque_constant;      /* 选型册的扭矩常数 N*m/A，见下方说明 */
+    float gear_ratio;
+} LKModelParam_t;
+
+/* MG6012E-i8：Kt 1.09 N*m/A，减速比 8:1
+ * 选型册里 Kt 是否已折算到输出轴、各型号口径是否一致没有说明，
+ * 同册的额定扭矩 6 N*m / 额定电流 3.5 A 约 1.7 与它也对不上，用于力矩换算前先实测核对 */
+static const LKModelParam_t lkModelParams[LK_MODEL_COUNT] =
 {
-    return model_type == LK_MG ? LK_MG_CURRENT_PER_LSB : LK_MF_CURRENT_PER_LSB;
-}
+    [LK_MG6012E_I8] = {LK_MG_CURRENT_PER_LSB, 1.09f, 8.0f},
+};
 
 static uint16_t LKMotor_ReadU16(const uint8_t *data)
 {
@@ -108,9 +117,12 @@ static void LKMotor_FeedbackFromBase(Motor_t *base, const uint8_t *data,
 void LKMotor_Init(LKMotor_t *motor, FDCAN_HandleTypeDef *can,
                   const LKMotorConfig_t *config)
 {
+    const LKModelParam_t *param = &lkModelParams[config->model];
+
     memset(motor, 0, sizeof(*motor));
     motor->motor_config = *config;
-    Motor_BaseInit(&motor->base, can, config->zero_point, config->inverse);
+    Motor_BaseInit(&motor->base, can, config->zero_point, config->inverse, param->gear_ratio);
+    motor->base.torque_constant = param->torque_constant;
     motor->base.motorops.enable = LKMotor_Enable;
     motor->base.motorops.disable = LKMotor_Disable;
     motor->base.motorops.protect = LKMotor_Protect;
@@ -221,8 +233,8 @@ void LKMotor_Feedback(LKMotor_t *motor, const uint8_t data[8], uint16_t rec_id)
         int16_t speed = (int16_t)LKMotor_ReadU16(&data[4]);
         uint16_t encoder = LKMotor_ReadU16(&data[6]);
         float speed_dps = (float)speed * LK_SPEED_DPS_PER_LSB;
-        feedback->current = (float)iq *
-                            LKMotor_CurrentPerLsb(motor->motor_config.model_type);
+        feedback->current = (float)iq * lkModelParams[motor->motor_config.model].current_per_lsb;
+        feedback->torque_nm = feedback->current * motor->base.torque_constant;
         feedback->velocity_rpm = speed_dps * LK_DPS_TO_RPM;
         feedback->omega_rads = speed_dps * MOTOR_DEG_TO_RAD;
         feedback->encoder = encoder;

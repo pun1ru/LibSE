@@ -16,13 +16,14 @@
 #define LK_SPEED_DPS_PER_LSB       1.0f
 #define LK_SPEED_COMMAND_SCALE     100.0f
 
+/* 具体型号，参数取自 LK_MOTOR.pdf 选型册和 CAN 协议；新增型号时在 LKMotor.c 的参数表里补一行 */
 typedef enum {
-    LK_MF,      ///< MF 系列，iq 33/4096 A/LSB
-    LK_MG       ///< MG 系列，iq 66/4096 A/LSB
-} LKMotorType_t;
+    LK_MG6012E_I8,  ///< 双磁编，MG6012E-i8B（带刹车版）电气参数相同
+    LK_MODEL_COUNT
+} LKMotorModel_t;
 
 typedef struct {
-    LKMotorType_t model_type;
+    LKMotorModel_t model;
     uint8_t motor_id;
     uint16_t feedback_id;
     uint16_t zero_point;

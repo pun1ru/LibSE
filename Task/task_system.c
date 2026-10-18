@@ -14,8 +14,12 @@ TaskHandle_t MonitorTaskHandle;
 TaskHandle_t ReceiveTaskHandle;
 TaskHandle_t TransmitTaskHandle;
 TaskHandle_t INSTaskHandle;
+TaskHandle_t GimbalTaskHandle;
 
 INS_t board_ins;
+Gimbal_t gimbalInstance;
+DMMotor_t gimbalYawMotor;
+LKMotor_t gimbalPitchMotor;
 
 /* 电机实例由使用者自行添加，并在初始化时填写对应 CAN 的绑定表 */
 TaskMotorBinding_t can1MotorBindings[TASK_CAN1_MOTOR_BINDING_COUNT];

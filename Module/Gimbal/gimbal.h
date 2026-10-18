@@ -69,16 +69,14 @@ typedef struct {
 
 /*--------------------------------------估计层--------------------------------------*/
 typedef struct {
-    float roll_deg;                             ///< 末端世界姿态，INS 约定
-    float pitch_deg;
+    float pitch_deg;                            ///< 末端世界指向，INS 约定，由枪管 x 轴方向得到
     float yaw_deg;
     float joint_deg[GIMBAL_AXIS_COUNT];         ///< 编码器关节角，方向按 motor->inverse 折算
     float joint_omega_dps[GIMBAL_AXIS_COUNT];   ///< 编码器关节角速度（相对底盘）
-    float gimbal_to_world[3][3];                ///< 末端 -> 世界，由 INS 欧拉角构造
+    float gimbal_to_world[3][3];                ///< 末端 -> 世界，由 INS 四元数构造
     float gimbal_to_base[3][3];                 ///< 末端 -> 底盘，由 DH 正运动学构造
     float base_to_world[3][3];                  ///< 底盘 -> 世界，由前两者反解
-    float world_to_base[3][3];                  ///< base_to_world 的转置，用于把目标投到底盘系
-    uint8_t valid;                              ///< INS 就绪且本周期取到数据
+    uint8_t valid;                             ///< INS 就绪且本周期取到数据
 } GimbalObserver_t;
 
 /*--------------------------------------控制层--------------------------------------*/
@@ -105,8 +103,6 @@ typedef struct {
 typedef struct {
     PIDStruct angle_pid;
     PIDStruct speed_pid;
-    float angle_d_alpha;        ///< D 项低通系数，随增益集加载
-    float speed_d_alpha;
     float angle_out_dps;        ///< 角度环输出，分频周期间保持
     float speed_ref_dps;        ///< 角度环输出 + 关节角速度前馈
     float feedforward;          ///< 模型前馈（重力补偿等），暂为 0
@@ -160,7 +156,7 @@ void Gimbal_Init(Gimbal_t *gimbal, const GimbalConfig_t *config);
  * 保护状态下忽略外部角度，目标由控制层跟随当前姿态；
  * 上层做增量控制时应以 gimbal->target 为基准，pitch 超出关节限位时控制层会把目标改写为可达方向 */
 void Gimbal_Input(Gimbal_t *gimbal, const GimbalInput_t *input);
-/* 估计层：由 INS 和编码器更新关节角与三个旋转矩阵 */
+/* 估计层：由 INS 四元数和编码器更新关节角与三个旋转矩阵 */
 void Gimbal_Estimate(Gimbal_t *gimbal);
 /* 控制层：世界系目标 -> 底盘系 -> 关节角（逆运动学），再做关节空间双环 PID
  * 调用频率即速度环频率，角度环按 angle_loop_div 分频；

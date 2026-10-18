@@ -45,6 +45,10 @@ void DMMotor_Init(DMMotor_t *motor, FDCAN_HandleTypeDef *can,
 void DMMotor_SendCommand(DMMotor_t *motor);
 void DMMotor_Feedback(DMMotor_t *motor, const uint8_t data[8], uint16_t rec_id);
 
+/* 减速比取自 DM-J4310-2EC、DM-J6006-2EC 手册 */
+#define DM4310_GEAR_RATIO 10.0f
+#define DM6006_GEAR_RATIO 6.0f
+
 #define DM4310_P_MIN -3.14f
 #define DM4310_P_MAX 3.14f
 #define DM4310_V_MIN -30.0f

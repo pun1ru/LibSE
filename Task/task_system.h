@@ -8,6 +8,9 @@
 #include "task.h"
 #include "ins.h"
 #include "Motor.h"
+#include "DMMotor.h"
+#include "LKMotor.h"
+#include "gimbal.h"
 
 #define TASK_CAN_INSTANCE_COUNT       3U
 #define TASK_CAN1_MOTOR_BINDING_COUNT  1U
@@ -54,8 +57,12 @@ extern TaskHandle_t MonitorTaskHandle;
 extern TaskHandle_t ReceiveTaskHandle;
 extern TaskHandle_t TransmitTaskHandle;
 extern TaskHandle_t INSTaskHandle;
+extern TaskHandle_t GimbalTaskHandle;
 
 extern INS_t board_ins;
+extern Gimbal_t gimbalInstance;
+extern DMMotor_t gimbalYawMotor;
+extern LKMotor_t gimbalPitchMotor;
 extern TaskMotorBinding_t can1MotorBindings[TASK_CAN1_MOTOR_BINDING_COUNT];
 extern TaskMotorBinding_t can2MotorBindings[TASK_CAN2_MOTOR_BINDING_COUNT];
 extern TaskMotorBinding_t can3MotorBindings[TASK_CAN3_MOTOR_BINDING_COUNT];

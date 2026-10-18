@@ -5,6 +5,7 @@
 #include "fdcan.h"
 #include "monitor.h"
 #include "task_define.h"
+#include "task_gimbal.h"
 #include "task_ins.h"
 #include "task_monitor.h"
 #include "task_receive.h"
@@ -106,6 +107,8 @@ void InitTask(void *argument)
                 TASK_TRANSMIT_PRIORITY, &TransmitTaskHandle);
     xTaskCreate(INS_Task, "INSTask", TASK_INS_STACK_SIZE, NULL,
                 TASK_INS_PRIORITY, &INSTaskHandle);
+    xTaskCreate(GimbalTask, "GimbalTask", TASK_GIMBAL_STACK_SIZE, NULL,
+                TASK_GIMBAL_PRIORITY, &GimbalTaskHandle);
     taskEXIT_CRITICAL();
     vTaskDelete(NULL);
 }

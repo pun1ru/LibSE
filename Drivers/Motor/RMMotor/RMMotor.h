@@ -14,6 +14,10 @@
 #define RM_C620_CURRENT_PER_LSB (20.0f / 16384.0f)
 #define RM_GM6020_CURRENT_PER_LSB (3.0f / 16384.0f)
 #define RM_C620_FEEDBACK_ID_BASE 0x200U
+/* 减速比：C620 配 M3508 取自手册，C610 配 M2006 的 36 手册里没有，凭经验填写待核对，GM6020 无减速箱 */
+#define RM_C610_GEAR_RATIO 36.0f
+#define RM_C620_GEAR_RATIO (3591.0f / 187.0f)
+#define RM_GM6020_GEAR_RATIO 1.0f
 
 typedef enum {
     RM_C610,

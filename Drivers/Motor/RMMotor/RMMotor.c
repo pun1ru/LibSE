@@ -81,7 +81,10 @@ void RMMotor_Init(RMMotor_t *motor, RMMotorGroup_t *group,
     motor->motor_config = *config;
     motor->group = group;
     /* 同组电机共用一帧，base.can 跟随所属 group */
-    Motor_BaseInit(&motor->base, group->can, config->zero_point, config->inverse);
+    float gear_ratio = config->motor_type == RM_C610 ? RM_C610_GEAR_RATIO :
+                       config->motor_type == RM_C620 ? RM_C620_GEAR_RATIO :
+                                                       RM_GM6020_GEAR_RATIO;
+    Motor_BaseInit(&motor->base, group->can, config->zero_point, config->inverse, gear_ratio);
     motor->base.motorops.disable = RMMotor_Disable;
     motor->base.motorops.protect = RMMotor_Disable;
     motor->base.motorops.sendcommand = RMMotor_SendFromBase;
