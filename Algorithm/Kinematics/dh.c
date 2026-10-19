@@ -3,7 +3,7 @@
 #include <math.h>
 #include <string.h>
 
-#include "arm_matrix.h"
+#include "position_tran.h"
 
 #define DH_DEG_TO_RAD (3.141592653589793f / 180.0f)
 
@@ -20,28 +20,27 @@ void DH_Transform(const DH_Param_t *param, float q_deg, float T[4][4])
     T[3][0] = 0.0f;    T[3][1] = 0.0f;     T[3][2] = 0.0f; T[3][3] = 1.0f;
 }
 
+void DH_LinkTransforms(const DH_Param_t *table, const float *q_deg, uint8_t n, float (*T)[4][4])
+{
+    for (uint8_t k = 0U; k < n; ++k)
+    {
+        DH_Transform(&table[k], q_deg[k], T[k]);
+    }
+}
+
 void DH_ForwardKinematics(const DH_Param_t *table, const float *q_deg,
                           uint8_t n, float T[4][4])
 {
     float joint[4][4];
     float result[4][4];
-    matrix_t mat_T, mat_joint, mat_result;
 
-    matrix_init(&mat_T, 4, 4, &T[0][0]);
-    matrix_init(&mat_joint, 4, 4, &joint[0][0]);
-    matrix_init(&mat_result, 4, 4, &result[0][0]);
+    Trans4_Identity(T);
 
-    memset(T, 0, sizeof(float) * 16U);
-    for (uint8_t i = 0U; i < 4U; ++i)
-    {
-        T[i][i] = 1.0f;
-    }
-
-    /* arm_mat_mult_f32 不支持输出与输入重叠，先乘到 result 再拷回 */
+    /* Trans4_Mul 不支持输出与输入重叠，先乘到 result 再拷回 */
     for (uint8_t k = 0U; k < n; ++k)
     {
         DH_Transform(&table[k], q_deg[k], joint);
-        matrix_mult(&mat_T, &mat_joint, &mat_result);
+        Trans4_Mul(T, joint, result);
         memcpy(T, result, sizeof(result));
     }
 }

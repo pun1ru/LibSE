@@ -31,14 +31,25 @@ typedef struct {
 } LKModelParam_t;
 
 #define LK_IQ_PER_NM(torque_constant, current_per_lsb) (1.0f / ((torque_constant) * (current_per_lsb)))
-#define LK_MG6012E_I8_TORQUE_CONSTANT 1.09f
 
-/* 取选型册印的 1.09，换算口径同 serialleg2027（一个固定的 iq / N*m，不乘减速比）
- * 按册内其他数据推算转子端 Kt 约 0.22，乘减速比 8 约 1.75，与 1.09 不一致，实际输出力矩以实测为准 */
+/* 扭矩常数取选型册规格表，直接使用，不乘减速比 */
 static const LKModelParam_t lkModelParams[LK_MODEL_COUNT] =
 {
-    [LK_MG6012E_I8] = {LK_MG_CURRENT_PER_LSB, LK_MG6012E_I8_TORQUE_CONSTANT, 8.0f,
+    [LK_MG6012E_I8] = {LK_MG_CURRENT_PER_LSB, LK_MG6012E_I8_TORQUE_CONSTANT,
+                       LK_MG6012E_I8_GEAR_RATIO,
                        LK_IQ_PER_NM(LK_MG6012E_I8_TORQUE_CONSTANT, LK_MG_CURRENT_PER_LSB)},
+    [LK_MG5010E_I10] = {LK_MG_CURRENT_PER_LSB, LK_MG5010E_I10_TORQUE_CONSTANT,
+                        LK_MG5010E_I10_GEAR_RATIO,
+                        LK_IQ_PER_NM(LK_MG5010E_I10_TORQUE_CONSTANT, LK_MG_CURRENT_PER_LSB)},
+    [LK_MF4015] = {LK_MF_CURRENT_PER_LSB, LK_MF4015_TORQUE_CONSTANT,
+                   LK_MF4015_GEAR_RATIO,
+                   LK_IQ_PER_NM(LK_MF4015_TORQUE_CONSTANT, LK_MF_CURRENT_PER_LSB)},
+    [LK_MF4005_25T] = {LK_MF_CURRENT_PER_LSB, LK_MF4005_25T_TORQUE_CONSTANT,
+                       LK_MF4005_GEAR_RATIO,
+                       LK_IQ_PER_NM(LK_MF4005_25T_TORQUE_CONSTANT, LK_MF_CURRENT_PER_LSB)},
+    [LK_MF4005_40T] = {LK_MF_CURRENT_PER_LSB, LK_MF4005_40T_TORQUE_CONSTANT,
+                       LK_MF4005_GEAR_RATIO,
+                       LK_IQ_PER_NM(LK_MF4005_40T_TORQUE_CONSTANT, LK_MF_CURRENT_PER_LSB)},
 };
 
 static uint16_t LKMotor_ReadU16(const uint8_t *data)

@@ -187,4 +187,112 @@ static inline void Quat_ToEuler(const float q[4], float euler[3])
     Matrix_ToEuler((const float (*)[3])R, euler);
 }
 
+/* out = a x b，out 不能与输入别名 */
+static inline void Vec3_Cross(const float a[3], const float b[3], float out[3])
+{
+    out[0] = a[1] * b[2] - a[2] * b[1];
+    out[1] = a[2] * b[0] - a[0] * b[2];
+    out[2] = a[0] * b[1] - a[1] * b[0];
+}
+
+/* 4x4 齐次变换 T = [R p; 0 1]，行优先，子坐标系 -> 父坐标系
+ * 最后一行恒为 [0 0 0 1]，乘法与求逆只算 3x4 的上半部分，最后一行直接赋常数
+ * out 不能与输入别名 */
+#define TRANS4_POS_COL  3U
+
+static inline void Trans4_Identity(float T[4][4])
+{
+    for (unsigned int i = 0U; i < 4U; ++i)
+    {
+        for (unsigned int j = 0U; j < 4U; ++j)
+        {
+            T[i][j] = (i == j) ? 1.0f : 0.0f;
+        }
+    }
+}
+
+/* out = A * B */
+static inline void Trans4_Mul(const float A[4][4], const float B[4][4], float out[4][4])
+{
+    for (unsigned int i = 0U; i < 3U; ++i)
+    {
+        for (unsigned int j = 0U; j < 3U; ++j)
+        {
+            out[i][j] = A[i][0] * B[0][j] + A[i][1] * B[1][j] + A[i][2] * B[2][j];
+        }
+        out[i][TRANS4_POS_COL] = A[i][0] * B[0][TRANS4_POS_COL] + A[i][1] * B[1][TRANS4_POS_COL] +
+                                 A[i][2] * B[2][TRANS4_POS_COL] + A[i][TRANS4_POS_COL];
+    }
+    out[3][0] = 0.0f;
+    out[3][1] = 0.0f;
+    out[3][2] = 0.0f;
+    out[3][3] = 1.0f;
+}
+
+/* out = T^-1，旋转部分正交，逆即转置，平移为 -R^T * p */
+static inline void Trans4_Inverse(const float T[4][4], float out[4][4])
+{
+    for (unsigned int i = 0U; i < 3U; ++i)
+    {
+        for (unsigned int j = 0U; j < 3U; ++j)
+        {
+            out[i][j] = T[j][i];
+        }
+        out[i][TRANS4_POS_COL] = -(T[0][i] * T[0][TRANS4_POS_COL] + T[1][i] * T[1][TRANS4_POS_COL] +
+                                   T[2][i] * T[2][TRANS4_POS_COL]);
+    }
+    out[3][0] = 0.0f;
+    out[3][1] = 0.0f;
+    out[3][2] = 0.0f;
+    out[3][3] = 1.0f;
+}
+
+/* 取旋转部分 */
+static inline void Trans4_GetRotation(const float T[4][4], float R[3][3])
+{
+    for (unsigned int i = 0U; i < 3U; ++i)
+    {
+        for (unsigned int j = 0U; j < 3U; ++j)
+        {
+            R[i][j] = T[i][j];
+        }
+    }
+}
+
+/* 取平移部分 */
+static inline void Trans4_GetPos(const float T[4][4], float p[3])
+{
+    for (unsigned int i = 0U; i < 3U; ++i)
+    {
+        p[i] = T[i][TRANS4_POS_COL];
+    }
+}
+
+/* out = R * v + p，变换位置点 */
+static inline void Trans4_MulPoint(const float T[4][4], const float v[3], float out[3])
+{
+    for (unsigned int i = 0U; i < 3U; ++i)
+    {
+        out[i] = T[i][0] * v[0] + T[i][1] * v[1] + T[i][2] * v[2] + T[i][TRANS4_POS_COL];
+    }
+}
+
+/* out = R * v，变换方向向量，不含平移 */
+static inline void Trans4_MulVec(const float T[4][4], const float v[3], float out[3])
+{
+    for (unsigned int i = 0U; i < 3U; ++i)
+    {
+        out[i] = T[i][0] * v[0] + T[i][1] * v[1] + T[i][2] * v[2];
+    }
+}
+
+/* out = R^T * v，父坐标系方向向量 -> 子坐标系 */
+static inline void Trans4_TransMulVec(const float T[4][4], const float v[3], float out[3])
+{
+    for (unsigned int i = 0U; i < 3U; ++i)
+    {
+        out[i] = T[0][i] * v[0] + T[1][i] * v[1] + T[2][i] * v[2];
+    }
+}
+
 #endif

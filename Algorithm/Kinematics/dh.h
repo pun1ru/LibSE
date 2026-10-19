@@ -24,6 +24,15 @@ typedef struct {
 void DH_Transform(const DH_Param_t *param, float q_deg, float T[4][4]);
 
 /**
+ * \brief 整条链每一行的齐次变换，T[i] 为 {i+1} -> {i}，供 kinematics / dynamics 的关节链函数使用
+ * \param[in]  table DH 参数表
+ * \param[in]  q_deg 各行关节角，长度 n
+ * \param[in]  n     行数
+ * \param[out] T     长度为 n 的 4x4 变换数组
+ */
+void DH_LinkTransforms(const DH_Param_t *table, const float *q_deg, uint8_t n, float (*T)[4][4]);
+
+/**
  * \brief 按 DH 参数表做正运动学 T = T_01 * T_12 * ... * T_{n-1,n}
  * \param[in]  table DH 参数表
  * \param[in]  q_deg 各行关节角，长度 n

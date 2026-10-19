@@ -162,8 +162,5 @@ void Gimbal_Estimate(Gimbal_t *gimbal);
  * 调用频率即速度环频率，角度环按 angle_loop_div 分频；
  * 角度环 PID 参数按分频后的周期整定 */
 void Gimbal_Control(Gimbal_t *gimbal);
-/* 开环调试：不跑逆解和 PID，output[轴] 按电机当前控制模式直接写进指令（力矩模式为 N*m）并发送；
- * 每个周期都要调用，保护或不想出力时传全 0。PID 状态每次清空，切回 Gimbal_Control 时不带旧积分 */
-void Gimbal_ControlOpenLoop(Gimbal_t *gimbal, const float output[GIMBAL_AXIS_COUNT]);
 
 #endif

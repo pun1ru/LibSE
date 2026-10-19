@@ -317,23 +317,3 @@ void Gimbal_Control(Gimbal_t *gimbal)
     Gimbal_SpeedLoop(pitch, ref->omega_dps[GIMBAL_PITCH], obs->joint_omega_dps[GIMBAL_PITCH]);
     Gimbal_ApplyOutput(gimbal);
 }
-
-void Gimbal_ControlOpenLoop(Gimbal_t *gimbal, const float output[GIMBAL_AXIS_COUNT])
-{
-    const GimbalObserver_t *obs = &gimbal->observer;
-
-    /* 不跑 PID，清空状态并让目标跟随当前世界指向，切回闭环时不跳变 */
-    Gimbal_ResetControl(gimbal);
-    if (obs->valid != 0U)
-    {
-        gimbal->target.pitch_deg = obs->pitch_deg;
-        gimbal->target.yaw_deg = obs->yaw_deg;
-    }
-    gimbal->target.pitch_omega_dps = 0.0f;
-    gimbal->target.yaw_omega_dps = 0.0f;
-    for (uint8_t i = 0U; i < GIMBAL_AXIS_COUNT; ++i)
-    {
-        gimbal->controller.axis[i].output = output[i];
-    }
-    Gimbal_ApplyOutput(gimbal);
-}
