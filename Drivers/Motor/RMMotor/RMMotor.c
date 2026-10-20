@@ -85,6 +85,9 @@ void RMMotor_Init(RMMotor_t *motor, RMMotorGroup_t *group,
                        config->motor_type == RM_C620 ? RM_C620_GEAR_RATIO :
                                                        RM_GM6020_GEAR_RATIO;
     Motor_BaseInit(&motor->base, group->can, config->zero_point, config->inverse, gear_ratio);
+    motor->base.feedback_id = config->motor_type == RM_GM6020 ?
+                              (uint16_t)(0x204U + config->motor_id) :
+                              (uint16_t)(RM_C620_FEEDBACK_ID_BASE + config->motor_id);
     motor->base.motorops.disable = RMMotor_Disable;
     motor->base.motorops.protect = RMMotor_Disable;
     motor->base.motorops.sendcommand = RMMotor_SendFromBase;

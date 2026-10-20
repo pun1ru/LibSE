@@ -137,6 +137,7 @@ void LKMotor_Init(LKMotor_t *motor, FDCAN_HandleTypeDef *can,
     memset(motor, 0, sizeof(*motor));
     motor->motor_config = *config;
     Motor_BaseInit(&motor->base, can, config->zero_point, config->inverse, param->gear_ratio);
+    motor->base.feedback_id = config->feedback_id;
     motor->base.torque_constant = param->torque_constant;
     motor->base.motorops.enable = LKMotor_Enable;
     motor->base.motorops.disable = LKMotor_Disable;

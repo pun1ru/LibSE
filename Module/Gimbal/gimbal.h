@@ -3,14 +3,17 @@
 
 #include <stdint.h>
 
+#include "CAN_driver.h"
+#include "FreeRTOS.h"
 #include "Motor.h"
 #include "algorism.h"
 #include "dh.h"
 #include "ins.h"
 #include "pid.h"
+#include "queue.h"
 
 /* 角度统一 deg，角速度 deg/s
- * 每个控制周期依次调用：Gimbal_Input -> Gimbal_Estimate -> Gimbal_Control
+ * 每个控制周期调用 Gimbal_Run，内部依次：目标输入 -> 观测 -> 控制 -> 通信
  * 坐标系与关节角定义见 gimbal.md：底盘系 X 前、Y 左、Z 上，末端系 X 前、Y 右、Z 下
  * 世界系目标与观测沿用 INS 约定：yaw 顺时针为正，pitch 抬头为正
  * 关节角：yaw 绕底盘 Z 轴逆时针为正，pitch 抬头为正，零位时枪管水平朝底盘正前方
@@ -58,6 +61,19 @@ typedef struct {
     float pitch_omega_dps;
     float yaw_omega_dps;
 } GimbalInput_t;
+
+/* 上层（状态机、自瞄）经消息队列发给云台的命令，角速度为世界系 */
+typedef struct {
+    GimbalState_t state;
+    float yaw_omega_dps;
+    float pitch_omega_dps;
+} GimbalCmd_t;
+
+/* 队列里的元素：命令加发布时刻，云台据此判断上层是否失联 */
+typedef struct {
+    GimbalCmd_t cmd;
+    TickType_t publish_tick;
+} GimbalCmdMail_t;
 
 /* 输入层处理后的世界系目标 */
 typedef struct {
@@ -122,19 +138,51 @@ typedef struct {
 } GimbalController_t;
 
 /*--------------------------------------对象与构造参数--------------------------------------*/
-/* 电机 inverse 同时决定指令和编码器反馈的方向：正指令应让关节角增大
+/* 初始化参数按依赖从底到顶分层：外设 -> 通信 -> 电机 -> 状态 -> 参数
+ * 电机 inverse 只翻转指令方向，反馈由估计层按 Motor_Direction 折算：正指令应让关节角增大
  * 电机 zero_point 标定在枪管水平、朝底盘正前方的位置 */
+
+/*--------------------------------------外设层--------------------------------------*/
+typedef struct {
+    CanInstance_t *yaw_can;     ///< yaw 电机所在 CAN，云台在初始化里把电机反馈绑上去
+    CanInstance_t *pitch_can;
+} GimbalPeriph_t;
+
+/*--------------------------------------通信层--------------------------------------*/
+typedef struct {
+    QueueHandle_t cmd_queue;    ///< 元素 GimbalCmdMail_t，长度 1 覆盖式，由 System 层创建
+    QueueHandle_t ins_queue;    ///< 元素 INSMsg_t，装在 pitch 连杆上的 IMU，轴向与末端系对齐
+} GimbalComm_t;
+
+/*--------------------------------------电机层--------------------------------------*/
+typedef struct {
+    Motor_t *yaw;
+    Motor_t *pitch;
+} GimbalMotor_t;
+
+/*--------------------------------------状态层--------------------------------------*/
+typedef struct {
+    GimbalState_t init_state;
+} GimbalStateInit_t;
+
+/*--------------------------------------参数层--------------------------------------*/
 typedef struct {
     GimbalModel_t model;
-    Motor_t *yaw_motor;
-    Motor_t *pitch_motor;
     GimbalGainSet_t normal_gain;
     GimbalGainSet_t sniper_gain;
-    const INS_t *ins;           ///< 安装在 pitch 连杆上的 IMU，轴向与末端系对齐
     float pitch_min_deg;        ///< pitch 关节角限位
     float pitch_max_deg;
     uint16_t angle_loop_div;    ///< 每 N 次 Gimbal_Control 跑一次角度环，0/1 为不分频
-    GimbalState_t init_state;
+    float period_s;             ///< Gimbal_Run 的调用周期
+    uint32_t cmd_timeout_ms;    ///< 命令超过这个时间没更新就按失联进保护
+} GimbalParam_t;
+
+typedef struct {
+    GimbalPeriph_t periph;
+    GimbalComm_t comm;
+    GimbalMotor_t motor;
+    GimbalStateInit_t state;
+    GimbalParam_t param;
 } GimbalConfig_t;
 
 typedef struct {
@@ -146,21 +194,19 @@ typedef struct {
     GimbalController_t controller;
     GimbalGainSet_t normal_gain;
     GimbalGainSet_t sniper_gain;
-    const INS_t *ins;
+    GimbalComm_t comm;
     float pitch_min_deg;
     float pitch_max_deg;
+    float period_s;
+    uint32_t cmd_timeout_ms;
+    uint16_t yaw_enable_divider;    ///< yaw 使能重发计数
+    uint8_t yaw_protect_slot;       ///< 保护态下失能、清错的补发节拍
 } Gimbal_t;
 
 void Gimbal_Init(Gimbal_t *gimbal, const GimbalConfig_t *config);
-/* 输入层：状态切换，世界系目标折算
- * 保护状态下忽略外部角度，目标由控制层跟随当前姿态；
- * 上层做增量控制时应以 gimbal->target 为基准，pitch 超出关节限位时控制层会把目标改写为可达方向 */
+void Gimbal_Run(Gimbal_t *gimbal);
 void Gimbal_Input(Gimbal_t *gimbal, const GimbalInput_t *input);
-/* 估计层：由 INS 四元数和编码器更新关节角与三个旋转矩阵 */
 void Gimbal_Estimate(Gimbal_t *gimbal);
-/* 控制层：世界系目标 -> 底盘系 -> 关节角（逆运动学），再做关节空间双环 PID
- * 调用频率即速度环频率，角度环按 angle_loop_div 分频；
- * 角度环 PID 参数按分频后的周期整定 */
 void Gimbal_Control(Gimbal_t *gimbal);
 
 #endif

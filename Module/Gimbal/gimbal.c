@@ -5,6 +5,13 @@
 #include <string.h>
 
 #include "position_tran.h"
+#include "task.h"
+
+/* yaw 的 DM 电机维护节拍（Gimbal_Run 调用次数），参照 hero_up 的电机发送逻辑 */
+#define GIMBAL_YAW_ENABLE_RESEND_DIV    200U
+#define GIMBAL_YAW_PROTECT_MAINT_DIV    16U
+#define GIMBAL_YAW_DISABLE_SLOT         0U
+#define GIMBAL_YAW_CLEAR_SLOT           8U
 
 #define GIMBAL_HORIZON_MIN      0.02f   /* 指向向量水平投影下限，目标接近天顶时冻结 yaw */
 #define GIMBAL_WORLD_PITCH_MAX  90.0f   /* 世界系 pitch 目标的物理范围 */
@@ -120,16 +127,22 @@ static void Gimbal_ApplyOutput(Gimbal_t *gimbal)
 void Gimbal_Init(Gimbal_t *gimbal, const GimbalConfig_t *config)
 {
     memset(gimbal, 0, sizeof(*gimbal));
-    gimbal->model = config->model;
-    gimbal->motor[GIMBAL_YAW] = config->yaw_motor;
-    gimbal->motor[GIMBAL_PITCH] = config->pitch_motor;
-    gimbal->normal_gain = config->normal_gain;
-    gimbal->sniper_gain = config->sniper_gain;
-    gimbal->ins = config->ins;
-    gimbal->pitch_min_deg = config->pitch_min_deg;
-    gimbal->pitch_max_deg = config->pitch_max_deg;
-    gimbal->state = config->init_state;
-    RateDividerInit(&gimbal->controller.angle_loop, config->angle_loop_div);
+    gimbal->model = config->param.model;
+    gimbal->motor[GIMBAL_YAW] = config->motor.yaw;
+    gimbal->motor[GIMBAL_PITCH] = config->motor.pitch;
+    gimbal->normal_gain = config->param.normal_gain;
+    gimbal->sniper_gain = config->param.sniper_gain;
+    gimbal->comm = config->comm;
+    gimbal->pitch_min_deg = config->param.pitch_min_deg;
+    gimbal->pitch_max_deg = config->param.pitch_max_deg;
+    gimbal->period_s = config->param.period_s;
+    gimbal->cmd_timeout_ms = config->param.cmd_timeout_ms;
+    gimbal->state = config->state.init_state;
+    gimbal->yaw_enable_divider = GIMBAL_YAW_ENABLE_RESEND_DIV - 1U;
+    /* 反馈帧绑到各自的 CAN 实例，回调只把数据解析进电机对象 */
+    (void)Motor_BindCan(config->motor.yaw, config->periph.yaw_can);
+    (void)Motor_BindCan(config->motor.pitch, config->periph.pitch_can);
+    RateDividerInit(&gimbal->controller.angle_loop, config->param.angle_loop_div);
     Gimbal_LoadGain(gimbal, gimbal->state == GIMBAL_SNIPER ?
                             &gimbal->sniper_gain : &gimbal->normal_gain);
 }
@@ -171,9 +184,10 @@ void Gimbal_Input(Gimbal_t *gimbal, const GimbalInput_t *input)
 void Gimbal_Estimate(Gimbal_t *gimbal)
 {
     GimbalObserver_t *obs = &gimbal->observer;
-    float quat[4];
+    INSMsg_t ins_msg;
 
-    if (INS_GetQuat(gimbal->ins, quat) == 0U)
+    /* 取 INS 最近一次发布的快照，队列还是空说明 INS 没就绪 */
+    if (xQueuePeek(gimbal->comm.ins_queue, &ins_msg, 0U) != pdPASS)
     {
         obs->valid = 0U;
         return;
@@ -188,7 +202,7 @@ void Gimbal_Estimate(Gimbal_t *gimbal)
     }
 
     /* INS 四元数是 {G}（X 前 Y 右 Z 下）到世界（Z 向上）的旋转，直接构造 gimbal_to_world */
-    Quat_ToMatrix(quat, obs->gimbal_to_world);
+    Quat_ToMatrix(ins_msg.quat, obs->gimbal_to_world);
 
     /* 关节角 -> 末端到底盘的旋转矩阵：DH 正运动学 T03 = T01 * T12 * T23 取旋转部分
      * 按 gimbal.md 的参数表结果为 Rz(yaw) * Ry(-pitch) * Rx(180°)；末端行不对应关节，q 恒为 0 */
@@ -297,7 +311,6 @@ void Gimbal_Control(Gimbal_t *gimbal)
         }
         gimbal->target.pitch_omega_dps = 0.0f;
         gimbal->target.yaw_omega_dps = 0.0f;
-        Gimbal_ApplyOutput(gimbal);
         return;
     }
 
@@ -315,5 +328,77 @@ void Gimbal_Control(Gimbal_t *gimbal)
     }
     Gimbal_SpeedLoop(yaw, ref->omega_dps[GIMBAL_YAW], obs->joint_omega_dps[GIMBAL_YAW]);
     Gimbal_SpeedLoop(pitch, ref->omega_dps[GIMBAL_PITCH], obs->joint_omega_dps[GIMBAL_PITCH]);
+}
+
+/*--------------------------------------目标输入--------------------------------------*/
+/* 取最近一条命令；队列为空或超时未更新按保护处理，角速度清零
+ * 以当前目标为基准积分一个周期的角速度再走 Gimbal_Input，保护态下角度被忽略，目标由控制层跟随观测 */
+static void Gimbal_TargetInput(Gimbal_t *gimbal)
+{
+    GimbalCmdMail_t mail;
+    GimbalCmd_t cmd = {.state = GIMBAL_PROTECTED};
+
+    if (xQueuePeek(gimbal->comm.cmd_queue, &mail, 0U) == pdPASS &&
+        (TickType_t)(xTaskGetTickCount() - mail.publish_tick) <=
+            pdMS_TO_TICKS(gimbal->cmd_timeout_ms))
+    {
+        cmd = mail.cmd;
+    }
+
+    GimbalInput_t input =
+    {
+        .state = cmd.state,
+        .yaw_deg = gimbal->target.yaw_deg + cmd.yaw_omega_dps * gimbal->period_s,
+        .pitch_deg = gimbal->target.pitch_deg + cmd.pitch_omega_dps * gimbal->period_s,
+        .yaw_omega_dps = cmd.yaw_omega_dps,
+        .pitch_omega_dps = cmd.pitch_omega_dps,
+    };
+    Gimbal_Input(gimbal, &input);
+}
+
+/*--------------------------------------通信--------------------------------------*/
+/* 只维护 yaw 的 DM 电机，pitch 的 LK 同 hero_up 不发运行 / 停止命令，保护态只发零电流
+ * 保护态：零力矩帧由输出发送，这里按节拍补发失能和清错
+ * 非保护态：退出保护的首周期立即使能，之后定期重发，电机晚于主控上电时也能使能上 */
+static void Gimbal_MaintainYaw(Gimbal_t *gimbal)
+{
+    Motor_t *yaw_motor = gimbal->motor[GIMBAL_YAW];
+
+    if (gimbal->state == GIMBAL_PROTECTED)
+    {
+        if (gimbal->yaw_protect_slot == GIMBAL_YAW_DISABLE_SLOT)
+        {
+            yaw_motor->motorops.disable(yaw_motor);
+        }
+        else if (gimbal->yaw_protect_slot == GIMBAL_YAW_CLEAR_SLOT)
+        {
+            yaw_motor->motorops.clearerror(yaw_motor);
+        }
+        gimbal->yaw_protect_slot = (uint8_t)((gimbal->yaw_protect_slot + 1U) %
+                                             GIMBAL_YAW_PROTECT_MAINT_DIV);
+        gimbal->yaw_enable_divider = GIMBAL_YAW_ENABLE_RESEND_DIV - 1U;
+        return;
+    }
+
+    gimbal->yaw_protect_slot = 0U;
+    if (++gimbal->yaw_enable_divider >= GIMBAL_YAW_ENABLE_RESEND_DIV)
+    {
+        gimbal->yaw_enable_divider = 0U;
+        yaw_motor->motorops.enable(yaw_motor);
+    }
+}
+
+static void Gimbal_Communicate(Gimbal_t *gimbal)
+{
+    /* 使能帧排在本周期力矩帧之前，退出保护的第一帧力矩就能生效 */
+    Gimbal_MaintainYaw(gimbal);
     Gimbal_ApplyOutput(gimbal);
+}
+
+void Gimbal_Run(Gimbal_t *gimbal)
+{
+    Gimbal_TargetInput(gimbal);
+    Gimbal_Estimate(gimbal);
+    Gimbal_Control(gimbal);
+    Gimbal_Communicate(gimbal);
 }

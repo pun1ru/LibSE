@@ -2,7 +2,25 @@
 
 #include <stddef.h>
 
-/*--------------------------------------状态切换--------------------------------------*/
+#include "task.h"
+
+/*--------------------------------------目标输入--------------------------------------*/
+/* 还没收到有效帧或已超时返回 NULL，状态机据此进保护 */
+static const DT7CmdData *GimbalAmmoState_ReadRemote(const GimbalAmmoState_t *state,
+                                                    DT7CmdData *command)
+{
+    DT7RecData raw;
+    uint32_t now_ms = (uint32_t)xTaskGetTickCount() * portTICK_PERIOD_MS;
+
+    if (RC_Remote_Read(state->periph.remote, &raw, command) == 0U ||
+        RC_Remote_IsOnline(state->periph.remote, now_ms, state->param.remote_timeout_ms) == 0U)
+    {
+        return NULL;
+    }
+    return command;
+}
+
+/*--------------------------------------观测--------------------------------------*/
 static GimbalState_t GimbalAmmoState_FromSwitch(uint8_t switch_right)
 {
     switch (switch_right)
@@ -16,51 +34,54 @@ static GimbalState_t GimbalAmmoState_FromSwitch(uint8_t switch_right)
     }
 }
 
-/*--------------------------------------接口--------------------------------------*/
-void GimbalAmmoState_Init(GimbalAmmoState_t *state, const GimbalAmmoStateConfig_t *config)
+/*--------------------------------------控制--------------------------------------*/
+/* command 为 NULL 表示遥控器离线，直接进保护 */
+static GimbalCmd_t GimbalAmmoState_Update(GimbalAmmoState_t *state, const DT7CmdData *command)
 {
-    state->config = *config;
-    state->gimbal_state = GIMBAL_PROTECTED;
-}
+    GimbalCmd_t cmd = {.state = GIMBAL_PROTECTED};
 
-void GimbalAmmoState_Update(GimbalAmmoState_t *state, const DT7CmdData *command,
-                            GimbalAmmoCmd_t *output)
-{
-    output->yaw_omega_dps = 0.0f;
-    output->pitch_omega_dps = 0.0f;
-
-    if (command == NULL)
-    {
-        state->gimbal_state = GIMBAL_PROTECTED;
-        output->gimbal_state = state->gimbal_state;
-        return;
-    }
-
-    state->gimbal_state = GimbalAmmoState_FromSwitch(command->switch_right);
-    output->gimbal_state = state->gimbal_state;
+    state->gimbal_state = (command == NULL) ? GIMBAL_PROTECTED :
+                          GimbalAmmoState_FromSwitch(command->switch_right);
+    cmd.state = state->gimbal_state;
     if (state->gimbal_state == GIMBAL_PROTECTED)
     {
-        return;
+        return cmd;
     }
 
     const GimbalStickGain_t *gain = (state->gimbal_state == GIMBAL_SNIPER) ?
-                                    &state->config.sniper : &state->config.normal;
+                                    &state->param.sniper : &state->param.normal;
     float stick_yaw = (float)command->ch2 / DT7_RC_CH_MAX_RELATIVE;
     float stick_pitch = (float)command->ch3 / DT7_RC_CH_MAX_RELATIVE;
-    output->yaw_omega_dps = stick_yaw * gain->yaw_rate_dps;
-    output->pitch_omega_dps = stick_pitch * gain->pitch_rate_dps;
+    cmd.yaw_omega_dps = stick_yaw * gain->yaw_rate_dps;
+    cmd.pitch_omega_dps = stick_pitch * gain->pitch_rate_dps;
+    return cmd;
 }
 
-void GimbalAmmoState_Apply(Gimbal_t *gimbal, const GimbalAmmoCmd_t *cmd, float period_s)
+/*--------------------------------------通信--------------------------------------*/
+static void GimbalAmmoState_Communicate(const GimbalAmmoState_t *state, const GimbalCmd_t *cmd)
 {
-    /* 保护态 Gimbal_Input 会忽略角度，target 由控制层跟随观测，退出保护时从当前姿态起积分 */
-    GimbalInput_t input =
+    GimbalCmdMail_t mail =
     {
-        .state = cmd->gimbal_state,
-        .yaw_deg = gimbal->target.yaw_deg + cmd->yaw_omega_dps * period_s,
-        .pitch_deg = gimbal->target.pitch_deg + cmd->pitch_omega_dps * period_s,
-        .yaw_omega_dps = cmd->yaw_omega_dps,
-        .pitch_omega_dps = cmd->pitch_omega_dps,
+        .cmd = *cmd,
+        .publish_tick = xTaskGetTickCount(),
     };
-    Gimbal_Input(gimbal, &input);
+    (void)xQueueOverwrite(state->comm.cmd_queue, &mail);
+}
+
+/*--------------------------------------接口--------------------------------------*/
+void GimbalAmmoState_Init(GimbalAmmoState_t *state, const GimbalAmmoStateConfig_t *config)
+{
+    state->periph = config->periph;
+    state->comm = config->comm;
+    state->param = config->param;
+    state->gimbal_state = config->state.init_state;
+}
+
+void GimbalAmmoState_Run(GimbalAmmoState_t *state)
+{
+    DT7CmdData command;
+    const DT7CmdData *remote = GimbalAmmoState_ReadRemote(state, &command);
+    GimbalCmd_t cmd = GimbalAmmoState_Update(state, remote);
+
+    GimbalAmmoState_Communicate(state, &cmd);
 }

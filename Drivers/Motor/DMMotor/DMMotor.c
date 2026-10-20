@@ -160,6 +160,7 @@ void DMMotor_Init(DMMotor_t *motor, FDCAN_HandleTypeDef *can,
     float gear_ratio = saved_config.motor_type == DM_4310 ? DM4310_GEAR_RATIO :
                                                            DM6006_GEAR_RATIO;
     Motor_BaseInit(&motor->base, can, config->zero_point, config->inverse, gear_ratio);
+    motor->base.feedback_id = config->feedback_id;
     motor->base.motorops.enable = DMMotor_SendEnable;
     motor->base.motorops.disable = DMMotor_SendDisable;
     motor->base.motorops.protect = DMMotor_SendDisable;

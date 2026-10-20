@@ -14,6 +14,32 @@
 static CanInstance_t *can_instances;
 static uint8_t can_instance_count;
 
+BaseType_t CAN_BindRx(CanInstance_t *instance, uint16_t id,
+                      CanRxHandler_t handler, void *context)
+{
+    if (instance == NULL || handler == NULL ||
+        instance->rx_binding_count >= CAN_RX_BINDING_MAX) {
+        return pdFAIL;
+    }
+
+    CanRxBinding_t *binding = &instance->rx_binding[instance->rx_binding_count];
+    binding->id = id;
+    binding->handler = handler;
+    binding->context = context;
+    ++instance->rx_binding_count;
+    return pdPASS;
+}
+
+void CAN_DispatchRx(const CanInstance_t *instance, const CanRxFrame_t *frame)
+{
+    for (uint8_t i = 0U; i < instance->rx_binding_count; ++i) {
+        const CanRxBinding_t *binding = &instance->rx_binding[i];
+        if (binding->id == frame->id) {
+            binding->handler(binding->context, frame->id, frame->data, frame->length);
+        }
+    }
+}
+
 void CAN_RegisterInstances(CanInstance_t *instances, uint8_t count)
 {
     can_instances = instances;

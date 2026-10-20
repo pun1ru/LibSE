@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "CAN_driver.h"
 #include "fdcan.h"
 
 typedef enum {      //电机控制模式 Control mode
@@ -77,7 +78,8 @@ struct Motor_t{
     MotorCmd_t motorcmd;
     MotorOps_t motorops;
     FDCAN_HandleTypeDef *can;           // 电机所在 CAN 总线
-    uint16_t zero_point;                // 人为标定的原始编码器零点
+    uint16_t feedback_id;               // 电机反馈帧的 CAN ID，由各驱动 Init 填写，Motor_BindCan 用
+    uint16_t zero_point;               // 人为标定的原始编码器零点
     bool inverse;                       // 反转电流或力矩命令方向；反馈保持原始方向，由使用方（云台）按此标志折算
     float gear_ratio;                   // 减速比 = 转子转速 / 输出轴转速，无减速箱为 1，由各电机驱动填写
     float torque_constant;              // 电流到力矩的系数 N*m/A，口径见各驱动，0 表示该驱动不提供
@@ -92,6 +94,10 @@ static inline float Motor_Direction(const Motor_t *motor)
 /* 基类构造：子类 Init 在 memset 之后调用，再填写各自的 motorops */
 void Motor_BaseInit(Motor_t *motor, FDCAN_HandleTypeDef *can,
                     uint16_t zero_point, bool inverse, float gear_ratio);
+
+/* 把电机的反馈帧绑到 CAN 实例上，之后收到 feedback_id 的帧会自动进 motorops.getfeedback
+ * 在 Init 之后、CAN 启动之前调用；绑定表满返回 false */
+bool Motor_BindCan(Motor_t *motor, CanInstance_t *can);
 
 /* 由相对零点的单圈角度同时填写 abs_angle_rad 与 abs_angle_deg，折算到 [-pi, pi] */
 void Motor_SetAbsAngle(Feedback_t *feedback, float angle_rad);

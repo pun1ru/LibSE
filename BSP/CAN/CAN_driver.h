@@ -55,6 +55,18 @@ typedef struct {
     TickType_t last_recover_tick;
 } CANTxMonitor;
 
+#define CAN_RX_BINDING_MAX 4U
+
+/* 接收绑定：收到 id 匹配的帧时调用 handler，context 由绑定方给，用来区分对象 */
+typedef void (*CanRxHandler_t)(void *context, uint16_t id,
+                               const uint8_t *data, uint8_t length);
+
+typedef struct {
+    uint16_t id;
+    CanRxHandler_t handler;
+    void *context;
+} CanRxBinding_t;
+
 typedef struct {
     FDCAN_HandleTypeDef *can;
     CANTxMonitor monitor;
@@ -62,8 +74,8 @@ typedef struct {
     QueueHandle_t rx_queue;
     SemaphoreHandle_t tx_mutex;
     uint32_t rx_fifo;
-    void (*on_receive)(FDCAN_HandleTypeDef *can, uint16_t id,
-                       const uint8_t *data, uint8_t length);
+    CanRxBinding_t rx_binding[CAN_RX_BINDING_MAX];
+    uint8_t rx_binding_count;
 } CanInstance_t;
 
 typedef struct {
@@ -78,6 +90,12 @@ typedef struct {
     uint8_t length;
     uint8_t data[CAN_FRAME_DATA_MAX];
 } CanRxFrame_t;
+
+/* 登记接收绑定，表满返回 pdFAIL；应在 CAN 启动之前调用，接收任务只读不写，不需要加锁 */
+BaseType_t CAN_BindRx(CanInstance_t *instance, uint16_t id,
+                      CanRxHandler_t handler, void *context);
+/* 把一帧分发给 id 匹配的绑定，由接收任务调用 */
+void CAN_DispatchRx(const CanInstance_t *instance, const CanRxFrame_t *frame);
 
 void CAN_RegisterInstances(CanInstance_t *instances, uint8_t count);
 CanInstance_t *CAN_GetInstances(uint8_t *count);

@@ -1,81 +1,78 @@
 #include "monitor.h"
 
-#include "FreeRTOS.h"
-#include "task.h"
-
 #include <stddef.h>
 #include <string.h>
 
-static MonitorStatus_t monitor_status;
-static uint32_t heartbeat[MONITOR_TASK_COUNT];
-static uint32_t previous_heartbeat[MONITOR_TASK_COUNT];
+#define MONITOR_ALIVE_RATIO_DIV     2U      /* 心跳数不低于期望的 1/2 才算在线 */
+#define MONITOR_NOTIFY_CLEAR_ALL    0xFFFFFFFFU
 
-static uint8_t Monitor_TaskIdValid(MonitorTaskId_t task)
+void Monitor_Init(Monitor_t *monitor, const MonitorConfig_t *config)
 {
-    return (task < MONITOR_TASK_COUNT) ? 1U : 0U;
+    memset(monitor, 0, sizeof(*monitor));
+    monitor->config = *config;
 }
 
-void Monitor_Init(void)
+void Monitor_Beat(const Monitor_t *monitor, uint8_t task_id)
 {
-    memset(&monitor_status, 0, sizeof(monitor_status))  ;
-    memset(heartbeat, 0, sizeof(heartbeat));
-    memset(previous_heartbeat, 0, sizeof(previous_heartbeat));
+    TaskHandle_t target = *monitor->config.comm.monitor_task;
+
+    if (target != NULL && task_id < monitor->config.param.task_count)
+    {
+        (void)xTaskNotify(target, 1UL << task_id, eSetBits);
+    }
 }
 
-void Monitor_TaskBeat(MonitorTaskId_t task)
+void Monitor_Collect(Monitor_t *monitor)
 {
-    if (Monitor_TaskIdValid(task) == 0U) {
+    uint32_t pending = 0U;
+
+    ++monitor->sample_count;
+    /* 超时为 0：没有通知就立即返回，不阻塞监控任务 */
+    if (xTaskNotifyWait(0U, MONITOR_NOTIFY_CLEAR_ALL, &pending, 0U) != pdPASS)
+    {
         return;
     }
 
-    taskENTER_CRITICAL();
-    ++heartbeat[task];
-    taskEXIT_CRITICAL();
-}
-
-void Monitor_TaskError(MonitorTaskId_t task)
-{
-    if (Monitor_TaskIdValid(task) == 0U) {
-        return;
+    for (uint8_t i = 0U; i < monitor->config.param.task_count; ++i)
+    {
+        if ((pending & (1UL << i)) != 0U)
+        {
+            ++monitor->task[i].beat_count;
+        }
     }
-
-    taskENTER_CRITICAL();
-    ++monitor_status.task[task].error_count;
-    taskEXIT_CRITICAL();
 }
 
-uint8_t Monitor_Sample(void)
+uint8_t Monitor_Evaluate(Monitor_t *monitor)
 {
-    uint8_t task_index;
+    const MonitorParam_t *param = &monitor->config.param;
+    uint32_t elapsed_ms = (uint32_t)monitor->sample_count * param->sample_period_ms;
     uint8_t went_offline = 0U;
 
-    taskENTER_CRITICAL();
-    for (task_index = 0U; task_index < MONITOR_TASK_COUNT; ++task_index) {
-        MonitorTaskStatus_t *task = &monitor_status.task[task_index];
+    for (uint8_t i = 0U; i < param->task_count; ++i)
+    {
+        MonitorTaskStatus_t *task = &monitor->task[i];
+        /* 任务比采样还快时，一个采样周期最多记一次心跳，期望也按采样周期算 */
+        uint32_t beat_period_ms = param->task_period_ms[i] > param->sample_period_ms ?
+                                  param->task_period_ms[i] : param->sample_period_ms;
+        uint32_t expected = elapsed_ms / beat_period_ms;
+        uint8_t alive = (task->beat_count != 0U &&
+                         (uint32_t)task->beat_count * MONITOR_ALIVE_RATIO_DIV >= expected) ? 1U : 0U;
 
-        if (heartbeat[task_index] == previous_heartbeat[task_index]) {
-            if (task->online != 0U) {
+        if (alive != 0U)
+        {
+            task->online = 1U;
+        }
+        else
+        {
+            if (task->online != 0U)
+            {
                 went_offline = 1U;
             }
             task->online = 0U;
-            ++task->error_count;
-        } else {
-            previous_heartbeat[task_index] = heartbeat[task_index];
-            task->online = 1U;
+            ++task->offline_count;
         }
+        task->beat_count = 0U;
     }
-    taskEXIT_CRITICAL();
-
+    monitor->sample_count = 0U;
     return went_offline;
-}
-
-void Monitor_GetSnapshot(MonitorStatus_t *status)
-{
-    if (status == NULL) {
-        return;
-    }
-
-    taskENTER_CRITICAL();
-    memcpy(status, &monitor_status, sizeof(*status));
-    taskEXIT_CRITICAL();
 }
