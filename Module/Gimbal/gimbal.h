@@ -92,6 +92,7 @@ typedef struct {
     float gimbal_to_world[3][3];                ///< 末端 -> 世界，由 INS 四元数构造
     float gimbal_to_base[3][3];                 ///< 末端 -> 底盘，由 DH 正运动学构造
     float base_to_world[3][3];                  ///< 底盘 -> 世界，由前两者反解
+    float gyro_yaw_frame_dps[3];                ///< INS 角速度转到 yaw 关节坐标系 {J1}，deg/s；z 分量是 yaw 轴上的惯性角速度（含底盘自身转动），底盘不动时应等于 joint_omega_dps[GIMBAL_YAW]
     uint8_t valid;                             ///< INS 就绪且本周期取到数据
 } GimbalObserver_t;
 
@@ -134,7 +135,8 @@ typedef struct {
 typedef struct {
     GimbalAxisCtrl_t axis[GIMBAL_AXIS_COUNT];
     GimbalJointRef_t joint_ref;
-    RateDivider angle_loop;     ///< 角度环相对速度环的分频
+    RateDivider angle_loop;     ///< 角度环相对 Gimbal_Control 调用的分频
+    RateDivider speed_loop;     ///< 速度环相对 Gimbal_Control 调用的分频，分频周期间输出保持
 } GimbalController_t;
 
 /*--------------------------------------对象与构造参数--------------------------------------*/
@@ -173,8 +175,14 @@ typedef struct {
     float pitch_min_deg;        ///< pitch 关节角限位
     float pitch_max_deg;
     uint16_t angle_loop_div;    ///< 每 N 次 Gimbal_Control 跑一次角度环，0/1 为不分频
+    uint16_t speed_loop_div;    ///< 每 N 次 Gimbal_Control 跑一次速度环，0/1 为不分频；PID 积分按次累加，ki 要按分频换算
+    /* 关节角速度的来源：0 用电机回传的速度；N>0 用关节角差分，每 N 次 Gimbal_Estimate 更新一次，期间保持
+     * 窗口越长，角度量化噪声越小（量化步长 / 窗口），但平均延迟约半个窗口 */
+    uint16_t speed_diff_div[GIMBAL_AXIS_COUNT];
+    uint8_t yaw_speed_use_gyro; ///< 非 0 时 yaw 速度环反馈用 IMU 角速度转到 {J1} 的 z 分量，0 用关节角速度（电机回传或差分）
     float period_s;             ///< Gimbal_Run 的调用周期
     uint32_t cmd_timeout_ms;    ///< 命令超过这个时间没更新就按失联进保护
+    uint8_t force_zero_output;  ///< 非 0 时写给电机的指令强制为 0，控制层照常计算，axis[].output 仍是 PID 结果，调试用
 } GimbalParam_t;
 
 typedef struct {
@@ -199,6 +207,12 @@ typedef struct {
     float pitch_max_deg;
     float period_s;
     uint32_t cmd_timeout_ms;
+    uint8_t force_zero_output;
+    uint8_t yaw_speed_use_gyro;
+    uint16_t speed_diff_div[GIMBAL_AXIS_COUNT];     ///< 差分窗口，0 表示用电机回传速度
+    uint16_t speed_diff_count[GIMBAL_AXIS_COUNT];   ///< 当前窗口已累计的估计次数
+    float speed_diff_last_deg[GIMBAL_AXIS_COUNT];   ///< 上一个窗口末的关节角
+    uint8_t speed_diff_ready[GIMBAL_AXIS_COUNT];    ///< 差分起点是否有效，观测中断后清零
     uint16_t yaw_enable_divider;    ///< yaw 使能重发计数
     uint8_t yaw_protect_slot;       ///< 保护态下失能、清错的补发节拍
 } Gimbal_t;

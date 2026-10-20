@@ -20,7 +20,7 @@ typedef struct {
 /* 发布给其他模块的姿态快照，四个量取自同一次更新，读者整体取走即是同一时刻的数据 */
 typedef struct {
     float quat[4];          ///< 机体到世界的四元数 [w, x, y, z]
-    float gyro[3];          ///< 机体系角速度 rad/s，已经过 mount
+    float gyro_rads[3];     ///< 机体系角速度 rad/s，已经过 mount
     INS_Euler_t euler;
     TickType_t tick;        ///< 发布时刻
 } INSMsg_t;
@@ -47,7 +47,8 @@ typedef struct {
     INSComm_t comm;
     MadgwickAHRS_t attitude;
     float mount[3][3];
-    float gyro[3];          ///< 机体系角速度 rad/s，已经过 mount
+    float gyro_rads[3];     ///< 机体系角速度 rad/s，已经过 mount，滤波器用这个
+    float gyro_dps[3];      ///< 与 gyro_rads 同一时刻的 deg/s 形式，只为观察方便，不参与计算
     float accel[3];         ///< 机体系加速度 m/s^2，已经过 mount
     float temperature;
     uint8_t ready;

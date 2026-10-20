@@ -13,6 +13,7 @@
 #define GIMBAL_YAW_DISABLE_SLOT         0U
 #define GIMBAL_YAW_CLEAR_SLOT           8U
 
+#define GIMBAL_FRAME_Z_INDEX    2U      /* 向量的 z 分量下标 */
 #define GIMBAL_HORIZON_MIN      0.02f   /* 指向向量水平投影下限，目标接近天顶时冻结 yaw */
 #define GIMBAL_WORLD_PITCH_MAX  90.0f   /* 世界系 pitch 目标的物理范围 */
 #define GIMBAL_YAW_WRAP_DEG     180.0f  /* yaw 角度归一化到 [-180, 180] */
@@ -60,6 +61,7 @@ static void Gimbal_ResetControl(Gimbal_t *gimbal)
         ref->omega_dps[i] = 0.0f;
     }
     RateDividerReset(&gimbal->controller.angle_loop);
+    RateDividerReset(&gimbal->controller.speed_loop);
 }
 
 static void Gimbal_LoadGain(Gimbal_t *gimbal, const GimbalGainSet_t *gain)
@@ -112,7 +114,9 @@ static void Gimbal_ApplyOutput(Gimbal_t *gimbal)
 {
     for (uint8_t i = 0U; i < GIMBAL_AXIS_COUNT; ++i)
     {
-        Gimbal_WriteCommand(gimbal->motor[i], gimbal->controller.axis[i].output);
+        /* 强制零输出只改写给电机的值，PID 的 output 保持原样，便于调试时观察 */
+        float output = (gimbal->force_zero_output != 0U) ? 0.0f : gimbal->controller.axis[i].output;
+        Gimbal_WriteCommand(gimbal->motor[i], output);
     }
     for (uint8_t i = 0U; i < GIMBAL_AXIS_COUNT; ++i)
     {
@@ -137,12 +141,19 @@ void Gimbal_Init(Gimbal_t *gimbal, const GimbalConfig_t *config)
     gimbal->pitch_max_deg = config->param.pitch_max_deg;
     gimbal->period_s = config->param.period_s;
     gimbal->cmd_timeout_ms = config->param.cmd_timeout_ms;
+    gimbal->force_zero_output = config->param.force_zero_output;
+    gimbal->yaw_speed_use_gyro = config->param.yaw_speed_use_gyro;
     gimbal->state = config->state.init_state;
     gimbal->yaw_enable_divider = GIMBAL_YAW_ENABLE_RESEND_DIV - 1U;
     /* 反馈帧绑到各自的 CAN 实例，回调只把数据解析进电机对象 */
     (void)Motor_BindCan(config->motor.yaw, config->periph.yaw_can);
     (void)Motor_BindCan(config->motor.pitch, config->periph.pitch_can);
     RateDividerInit(&gimbal->controller.angle_loop, config->param.angle_loop_div);
+    RateDividerInit(&gimbal->controller.speed_loop, config->param.speed_loop_div);
+    for (uint8_t i = 0U; i < GIMBAL_AXIS_COUNT; ++i)
+    {
+        gimbal->speed_diff_div[i] = config->param.speed_diff_div[i];
+    }
     Gimbal_LoadGain(gimbal, gimbal->state == GIMBAL_SNIPER ?
                             &gimbal->sniper_gain : &gimbal->normal_gain);
 }
@@ -180,6 +191,35 @@ void Gimbal_Input(Gimbal_t *gimbal, const GimbalInput_t *input)
 }
 
 /*--------------------------------------估计层--------------------------------------*/
+/* 关节角差分求角速度：每 speed_diff_div 次更新一次，期间保持上次结果
+ * 起点无效（首次或观测中断后）时先记起点，角速度给 0；差值按最短路径折返，过 ±180 不跳变 */
+static void Gimbal_DiffJointOmega(Gimbal_t *gimbal, uint8_t axis)
+{
+    GimbalObserver_t *obs = &gimbal->observer;
+
+    if (gimbal->speed_diff_ready[axis] == 0U)
+    {
+        gimbal->speed_diff_last_deg[axis] = obs->joint_deg[axis];
+        gimbal->speed_diff_count[axis] = 0U;
+        gimbal->speed_diff_ready[axis] = 1U;
+        obs->joint_omega_dps[axis] = 0.0f;
+        return;
+    }
+
+    ++gimbal->speed_diff_count[axis];
+    if (gimbal->speed_diff_count[axis] < gimbal->speed_diff_div[axis])
+    {
+        return;
+    }
+
+    float window_s = (float)gimbal->speed_diff_count[axis] * gimbal->period_s;
+    float delta_deg = AngleLimit(obs->joint_deg[axis] - gimbal->speed_diff_last_deg[axis],
+                                 -GIMBAL_YAW_WRAP_DEG, GIMBAL_YAW_WRAP_DEG);
+    obs->joint_omega_dps[axis] = delta_deg / window_s;
+    gimbal->speed_diff_last_deg[axis] = obs->joint_deg[axis];
+    gimbal->speed_diff_count[axis] = 0U;
+}
+
 /* 电机 inverse 由驱动只翻转指令，反馈在这里按同一方向折算成关节角 */
 void Gimbal_Estimate(Gimbal_t *gimbal)
 {
@@ -190,6 +230,8 @@ void Gimbal_Estimate(Gimbal_t *gimbal)
     if (xQueuePeek(gimbal->comm.ins_queue, &ins_msg, 0U) != pdPASS)
     {
         obs->valid = 0U;
+        /* 观测中断期间差分没有连续性，恢复后重新取起点，避免第一个窗口出现假速度 */
+        memset(gimbal->speed_diff_ready, 0, sizeof(gimbal->speed_diff_ready));
         return;
     }
 
@@ -198,7 +240,14 @@ void Gimbal_Estimate(Gimbal_t *gimbal)
         const Motor_t *motor = gimbal->motor[i];
         float direction = Motor_Direction(motor);
         obs->joint_deg[i] = direction * motor->feedback.abs_angle_deg;
-        obs->joint_omega_dps[i] = direction * motor->feedback.omega_rads * MOTOR_RAD_TO_DEG;
+        if (gimbal->speed_diff_div[i] == 0U)
+        {
+            obs->joint_omega_dps[i] = direction * motor->feedback.omega_rads * MOTOR_RAD_TO_DEG;
+        }
+        else
+        {
+            Gimbal_DiffJointOmega(gimbal, i);
+        }
     }
 
     /* INS 四元数是 {G}（X 前 Y 右 Z 下）到世界（Z 向上）的旋转，直接构造 gimbal_to_world */
@@ -214,6 +263,21 @@ void Gimbal_Estimate(Gimbal_t *gimbal)
     {
         memcpy(obs->gimbal_to_base[i], T[i], sizeof(obs->gimbal_to_base[i]));
     }
+
+    /* INS 角速度（{G} 系）转到 yaw 关节坐标系 {J1}：先乘 gimbal_to_base 到底盘系，再乘 {J1} -> 底盘 的转置
+     * {J1} 只含 yaw 一行，T 的旋转部分是 Rz(yaw)；pitch 轴水平，pitch 转动在 {J1} 的 z 分量上没有贡献 */
+    float t_j1[4][4];
+    float j1_to_base[3][3];
+    float gyro_g_dps[3];
+    float gyro_base_dps[3];
+    DH_ForwardKinematics(gimbal->model.dh, q_deg, 1U, t_j1);
+    for (uint8_t i = 0U; i < 3U; ++i)
+    {
+        memcpy(j1_to_base[i], t_j1[i], sizeof(j1_to_base[i]));
+        gyro_g_dps[i] = ins_msg.gyro_rads[i] * MOTOR_RAD_TO_DEG;
+    }
+    Mat3_MulVec(obs->gimbal_to_base, gyro_g_dps, gyro_base_dps);
+    Mat3_TransMulVec(j1_to_base, gyro_base_dps, obs->gyro_yaw_frame_dps);
 
     /* 末端世界指向（INS 约定）取枪管 x 轴在世界系的方向，天顶处 yaw 退化为 0，pitch 仍正确 */
     const float barrel_world[3] = {obs->gimbal_to_world[0][0], obs->gimbal_to_world[1][0],
@@ -326,8 +390,17 @@ void Gimbal_Control(Gimbal_t *gimbal)
                                          -GIMBAL_YAW_WRAP_DEG, GIMBAL_YAW_WRAP_DEG));
         Gimbal_AngleLoop(pitch, ref->angle_deg[GIMBAL_PITCH] - obs->joint_deg[GIMBAL_PITCH]);
     }
-    Gimbal_SpeedLoop(yaw, ref->omega_dps[GIMBAL_YAW], obs->joint_omega_dps[GIMBAL_YAW]);
-    Gimbal_SpeedLoop(pitch, ref->omega_dps[GIMBAL_PITCH], obs->joint_omega_dps[GIMBAL_PITCH]);
+    /* 速度环按自己的分频执行，分频周期间 ctrl->output 保持上次结果 */
+    if (RateDividerTick(&gimbal->controller.speed_loop) != 0U)
+    {
+        /* yaw 速度反馈：陀螺在 {J1} 系的 z 分量是惯性角速度，不经过电机回传和差分
+         * 底盘静止时它等于 joint_omega_dps[GIMBAL_YAW]，符号同向；底盘转动时会多出底盘转速，与基于底盘系的前馈口径不再一致 */
+        float yaw_feedback_dps = (gimbal->yaw_speed_use_gyro != 0U) ?
+                                 obs->gyro_yaw_frame_dps[GIMBAL_FRAME_Z_INDEX] :
+                                 obs->joint_omega_dps[GIMBAL_YAW];
+        Gimbal_SpeedLoop(yaw, ref->omega_dps[GIMBAL_YAW], yaw_feedback_dps);
+        Gimbal_SpeedLoop(pitch, ref->omega_dps[GIMBAL_PITCH], obs->joint_omega_dps[GIMBAL_PITCH]);
+    }
 }
 
 /*--------------------------------------目标输入--------------------------------------*/

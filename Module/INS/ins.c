@@ -7,6 +7,8 @@
  * 默认的单位四元数与它正好差 180°，落在梯度下降的鞍点上，加速度修正几乎为 0，姿态收敛不了 */
 static const float insInitQuat[4] = {0.0f, 1.0f, 0.0f, 0.0f};
 
+#define INS_RAD_TO_DEG  57.295779513f
+
 //温控还没上
 void INS_Init(INS_t *ins, const INSConfig_t *config)
 {
@@ -40,16 +42,17 @@ static void INS_Observe(INS_t *ins, float dt)
     }
     /* 陀螺与加速度计必须用同一个安装矩阵，转到机体系后再进滤波器 */
     for (uint8_t i = 0U; i < 3U; ++i) {
-        ins->gyro[i] = ins->mount[i][0] * gyro_sensor[0] +
-                       ins->mount[i][1] * gyro_sensor[1] +
-                       ins->mount[i][2] * gyro_sensor[2];
+        ins->gyro_rads[i] = ins->mount[i][0] * gyro_sensor[0] +
+                            ins->mount[i][1] * gyro_sensor[1] +
+                            ins->mount[i][2] * gyro_sensor[2];
+        ins->gyro_dps[i] = ins->gyro_rads[i] * INS_RAD_TO_DEG;
         ins->accel[i] = ins->mount[i][0] * accel_sensor[0] +
                         ins->mount[i][1] * accel_sensor[1] +
                         ins->mount[i][2] * accel_sensor[2];
     }
     ins->temperature = (float)raw_temp * BMI088_TEMP_FACTOR + BMI088_TEMP_OFFSET;
-    MadgwickAHRS_Update(&ins->attitude, ins->gyro[0], ins->gyro[1],
-                        ins->gyro[2], ins->accel[0], ins->accel[1],
+    MadgwickAHRS_Update(&ins->attitude, ins->gyro_rads[0], ins->gyro_rads[1],
+                        ins->gyro_rads[2], ins->accel[0], ins->accel[1],
                         ins->accel[2], dt);
     ins->last_dt_s = dt;
     ++ins->update_count;
@@ -61,7 +64,7 @@ static void INS_Communicate(const INS_t *ins)
     INSMsg_t msg;
 
     memcpy(msg.quat, ins->attitude.q, sizeof(msg.quat));
-    memcpy(msg.gyro, ins->gyro, sizeof(msg.gyro));
+    memcpy(msg.gyro_rads, ins->gyro_rads, sizeof(msg.gyro_rads));
     msg.euler.pitch_deg = ins->attitude.Pitch;
     msg.euler.roll_deg = ins->attitude.Roll;
     msg.euler.yaw_deg = ins->attitude.Yaw;
