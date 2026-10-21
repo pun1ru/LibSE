@@ -30,12 +30,13 @@ BaseType_t CAN_BindRx(CanInstance_t *instance, uint16_t id,
     return pdPASS;
 }
 
-void CAN_DispatchRx(const CanInstance_t *instance, const CanRxFrame_t *frame)
+void CAN_DispatchRx(const CanInstance_t *instance, uint16_t id,
+                    const uint8_t *data, uint8_t length)
 {
     for (uint8_t i = 0U; i < instance->rx_binding_count; ++i) {
         const CanRxBinding_t *binding = &instance->rx_binding[i];
-        if (binding->id == frame->id) {
-            binding->handler(binding->context, frame->id, frame->data, frame->length);
+        if (binding->id == id) {
+            binding->handler(binding->context, id, data, length);
         }
     }
 }
@@ -390,58 +391,34 @@ BaseType_t CANTransmit_QueueInit(void)
     return pdPASS;
 }
 
-BaseType_t CANReceive_QueueInit(void)
-{
-    if (can_instances == NULL || can_instance_count == 0U) {
-        return pdFAIL;
-    }
-
-    for (uint8_t i = 0U; i < can_instance_count; ++i) {
-        if (can_instances[i].rx_queue == NULL) {
-            can_instances[i].rx_queue = xQueueCreate(CAN_RX_QUEUE_LENGTH,
-                                                     sizeof(CanRxFrame_t));
-        }
-        if (can_instances[i].rx_queue == NULL) {
-            return pdFAIL;
-        }
-    }
-    return pdPASS;
-}
-
+/* 在中断里读空硬件 FIFO，每帧直接分发给绑定的回调，不经队列和任务
+ * 即使实例没登记也要读空，否则 FIFO 满了会一直触发中断 */
 static void CANReceive_FromIsr(FDCAN_HandleTypeDef *hcan, uint32_t fifo)
 {
     CanInstance_t *instance = CAN_InstanceFor(hcan);
-    BaseType_t task_woken = pdFALSE;
     FDCAN_RxHeaderTypeDef header;
-    CanRxFrame_t frame;
     uint8_t rx_data[64];
 
     if (hcan == NULL) {
         return;
     }
 
-    /* Drain the hardware FIFO even when registration or queue creation failed. */
     while (HAL_FDCAN_GetRxFifoFillLevel(hcan, fifo) != 0U) {
         if (HAL_FDCAN_GetRxMessage(hcan, fifo, &header, rx_data) != HAL_OK) {
             break;
         }
 
-        if (instance == NULL || instance->rx_queue == NULL ||
+        if (instance == NULL ||
             header.IdType != FDCAN_STANDARD_ID ||
             header.RxFrameType != FDCAN_DATA_FRAME ||
             header.DataLength > FDCAN_DLC_BYTES_8) {
             continue;
         }
 
-        frame.id = (uint16_t)header.Identifier;
-        frame.length = (uint8_t)header.DataLength;
-        memset(frame.data, 0, sizeof(frame.data));
-        if (frame.length != 0U) {
-            memcpy(frame.data, rx_data, frame.length);
-        }
-        (void)xQueueSendFromISR(instance->rx_queue, &frame, &task_woken);
+        /* DLC 0 ~ 8 的编码值就等于字节数 */
+        CAN_DispatchRx(instance, (uint16_t)header.Identifier, rx_data,
+                       (uint8_t)header.DataLength);
     }
-    portYIELD_FROM_ISR(task_woken);
 }
 
 void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hcan, uint32_t flags)

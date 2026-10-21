@@ -7,10 +7,13 @@
 #include "gimbal.h"
 #include "queue.h"
 #include "remote_control.h"
+#include "shooter.h"
 
-/* 最小状态机：只按遥控器拨杆决定云台状态，摇杆映射成世界系角速度，不处理键鼠
+/* 最小状态机：只按遥控器拨杆决定云台和摩擦轮状态，摇杆映射成世界系角速度，不处理键鼠
  * 右拨杆：上 -> 保护，中 -> 正常，下 -> 吊射；遥控器离线或拨杆值无效 -> 保护
  * 左摇杆：水平 ch2 -> yaw，竖直 ch3 -> pitch，方向沿用 INS 约定（右推 yaw 正，上推抬头）
+ * 摩擦轮参照 hero_up 的 fric_mode：左拨杆拨到上的那一下切换开关，开 -> 使能，关 -> 待机低速；
+ * 云台保护时摩擦轮跟着保护，开关清成关，回到非保护后要重新拨一次才开
  * 一个周期：GimbalAmmoState_Run，内部依次 目标输入（读遥控器）-> 观测（拨杆定状态）-> 控制（摇杆算角速度）-> 通信（发布命令） */
 
 /*--------------------------------------外设层--------------------------------------*/
@@ -20,7 +23,8 @@ typedef struct {
 
 /*--------------------------------------通信层--------------------------------------*/
 typedef struct {
-    QueueHandle_t cmd_queue;    ///< 元素 GimbalCmdMail_t，长度 1 覆盖式，由 System 层创建
+    QueueHandle_t cmd_queue;        ///< 元素 GimbalCmdMail_t，长度 1 覆盖式，由 System 层创建
+    QueueHandle_t shooter_queue;    ///< 元素 ShooterCmdMail_t，长度 1 覆盖式，由 System 层创建
 } GimbalAmmoStateComm_t;
 
 /*--------------------------------------状态层--------------------------------------*/
@@ -52,6 +56,9 @@ typedef struct {
     GimbalAmmoStateComm_t comm;
     GimbalAmmoStateParam_t param;
     GimbalState_t gimbal_state;
+    ShooterState_t shooter_state;
+    uint8_t fric_on;            ///< 摩擦轮开关，对应 hero_up 的 fric_mode
+    uint8_t last_switch_left;   ///< 上一帧左拨杆，0 表示还没见过有效帧，用来取上升沿
 } GimbalAmmoState_t;
 
 void GimbalAmmoState_Init(GimbalAmmoState_t *state, const GimbalAmmoStateConfig_t *config);

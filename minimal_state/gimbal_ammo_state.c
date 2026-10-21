@@ -57,15 +57,57 @@ static GimbalCmd_t GimbalAmmoState_Update(GimbalAmmoState_t *state, const DT7Cmd
     return cmd;
 }
 
-/*--------------------------------------通信--------------------------------------*/
-static void GimbalAmmoState_Communicate(const GimbalAmmoState_t *state, const GimbalCmd_t *cmd)
+/* 参照 hero_up 的 fric_mode：左拨杆拨到上的那一下切换开关
+ * 云台保护时摩擦轮也保护并清开关；上一帧没见过（离线后首帧）不算上升沿，防止恢复瞬间误开 */
+static ShooterCmd_t GimbalAmmoState_UpdateShooter(GimbalAmmoState_t *state, const DT7CmdData *command)
 {
+    ShooterCmd_t cmd = {.state = SHOOTER_PROTECTED};
+
+    if (command == NULL)
+    {
+        state->fric_on = 0U;
+        state->last_switch_left = 0U;
+    }
+    else
+    {
+        uint8_t switch_left = (uint8_t)command->switch_left;
+        if (state->gimbal_state == GIMBAL_PROTECTED)
+        {
+            state->fric_on = 0U;
+        }
+        else if (state->last_switch_left != 0U && state->last_switch_left != DT7_RC_SW_UP &&
+                 switch_left == DT7_RC_SW_UP)
+        {
+            state->fric_on ^= 1U;
+        }
+        state->last_switch_left = switch_left;
+    }
+
+    if (state->gimbal_state != GIMBAL_PROTECTED)
+    {
+        cmd.state = (state->fric_on != 0U) ? SHOOTER_ENABLED : SHOOTER_STANDBY;
+    }
+    state->shooter_state = cmd.state;
+    return cmd;
+}
+
+/*--------------------------------------通信--------------------------------------*/
+static void GimbalAmmoState_Communicate(const GimbalAmmoState_t *state, const GimbalCmd_t *cmd,
+                                        const ShooterCmd_t *shooter_cmd)
+{
+    TickType_t now = xTaskGetTickCount();
     GimbalCmdMail_t mail =
     {
         .cmd = *cmd,
-        .publish_tick = xTaskGetTickCount(),
+        .publish_tick = now,
+    };
+    ShooterCmdMail_t shooter_mail =
+    {
+        .cmd = *shooter_cmd,
+        .publish_tick = now,
     };
     (void)xQueueOverwrite(state->comm.cmd_queue, &mail);
+    (void)xQueueOverwrite(state->comm.shooter_queue, &shooter_mail);
 }
 
 /*--------------------------------------接口--------------------------------------*/
@@ -75,6 +117,9 @@ void GimbalAmmoState_Init(GimbalAmmoState_t *state, const GimbalAmmoStateConfig_
     state->comm = config->comm;
     state->param = config->param;
     state->gimbal_state = config->state.init_state;
+    state->shooter_state = SHOOTER_PROTECTED;
+    state->fric_on = 0U;
+    state->last_switch_left = 0U;
 }
 
 void GimbalAmmoState_Run(GimbalAmmoState_t *state)
@@ -82,6 +127,7 @@ void GimbalAmmoState_Run(GimbalAmmoState_t *state)
     DT7CmdData command;
     const DT7CmdData *remote = GimbalAmmoState_ReadRemote(state, &command);
     GimbalCmd_t cmd = GimbalAmmoState_Update(state, remote);
+    ShooterCmd_t shooter_cmd = GimbalAmmoState_UpdateShooter(state, remote);
 
-    GimbalAmmoState_Communicate(state, &cmd);
+    GimbalAmmoState_Communicate(state, &cmd, &shooter_cmd);
 }

@@ -9,7 +9,6 @@
 #include "semphr.h"
 
 #define CAN_TX_QUEUE_LENGTH 16U
-#define CAN_RX_QUEUE_LENGTH 32U
 #define CAN_STANDARD_ID_MAX 0x7FFU
 #define CAN_FRAME_DATA_MAX 8U
 #define CAN_RECOVER_REASON_BUS_OFF     1U
@@ -55,9 +54,10 @@ typedef struct {
     TickType_t last_recover_tick;
 } CANTxMonitor;
 
-#define CAN_RX_BINDING_MAX 4U
+#define CAN_RX_BINDING_MAX 8U
 
-/* 接收绑定：收到 id 匹配的帧时调用 handler，context 由绑定方给，用来区分对象 */
+/* 接收绑定：收到 id 匹配的帧时调用 handler，context 由绑定方给，用来区分对象
+ * handler 在 CAN 接收中断里执行：只解析并写自己的缓存，保持简短，禁止调用非 FromISR 的 FreeRTOS 接口 */
 typedef void (*CanRxHandler_t)(void *context, uint16_t id,
                                const uint8_t *data, uint8_t length);
 
@@ -71,7 +71,6 @@ typedef struct {
     FDCAN_HandleTypeDef *can;
     CANTxMonitor monitor;
     QueueHandle_t tx_queue;
-    QueueHandle_t rx_queue;
     SemaphoreHandle_t tx_mutex;
     uint32_t rx_fifo;
     CanRxBinding_t rx_binding[CAN_RX_BINDING_MAX];
@@ -85,17 +84,12 @@ typedef struct {
     uint8_t length;
 } CanTxFrame_t;
 
-typedef struct {
-    uint16_t id;
-    uint8_t length;
-    uint8_t data[CAN_FRAME_DATA_MAX];
-} CanRxFrame_t;
-
-/* 登记接收绑定，表满返回 pdFAIL；应在 CAN 启动之前调用，接收任务只读不写，不需要加锁 */
+/* 登记接收绑定，表满返回 pdFAIL；应在 CAN 启动之前调用，中断只读不写，不需要加锁 */
 BaseType_t CAN_BindRx(CanInstance_t *instance, uint16_t id,
                       CanRxHandler_t handler, void *context);
-/* 把一帧分发给 id 匹配的绑定，由接收任务调用 */
-void CAN_DispatchRx(const CanInstance_t *instance, const CanRxFrame_t *frame);
+/* 把一帧分发给 id 匹配的绑定，由 CAN 接收中断调用 */
+void CAN_DispatchRx(const CanInstance_t *instance, uint16_t id,
+                    const uint8_t *data, uint8_t length);
 
 void CAN_RegisterInstances(CanInstance_t *instances, uint8_t count);
 CanInstance_t *CAN_GetInstances(uint8_t *count);
@@ -108,7 +102,6 @@ uint8_t fdcanx_send_data(FDCAN_HandleTypeDef *hfdcan, uint16_t id,
                          const uint8_t *data, uint32_t len);
 
 BaseType_t CANTransmit_QueueInit(void);
-BaseType_t CANReceive_QueueInit(void);
 BaseType_t CANTransmit_Enqueue(FDCAN_HandleTypeDef *hcan, uint16_t std_id,
                                const uint8_t data[CAN_FRAME_DATA_MAX]);
 BaseType_t CANTransmit_EnqueueLength(FDCAN_HandleTypeDef *hcan,
