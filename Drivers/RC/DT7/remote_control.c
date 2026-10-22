@@ -67,15 +67,16 @@ static void RC_Remote_Decode(RC_Remote_t *remote,
     DT7RawDataUpdate(&raw, frame);
     DT7DataProcess(&command, &raw);
 
-    taskENTER_CRITICAL();
+    /* 在串口中断里执行，读取方在任务里用 taskENTER_CRITICAL 拷贝，两边互斥 */
+    UBaseType_t saved = taskENTER_CRITICAL_FROM_ISR();
     remote->raw = raw;
     remote->command = command;
     remote->frame_count++;
     remote->valid_frame_count++;
     remote->frame_ready = 1U;
     remote->online = 1U;
-    remote->last_frame_tick = (uint32_t)xTaskGetTickCount();
-    taskEXIT_CRITICAL();
+    remote->last_frame_tick = (uint32_t)xTaskGetTickCountFromISR();
+    taskEXIT_CRITICAL_FROM_ISR(saved);
 }
 
 void RC_Init(RC_Remote_t *remote)
@@ -139,11 +140,27 @@ void RC_Remote_OnError(RC_Remote_t *remote)
         return;
     }
 
-    taskENTER_CRITICAL();
+    UBaseType_t saved = taskENTER_CRITICAL_FROM_ISR();
     remote->stream_size = 0U;
     remote->error_count++;
     remote->online = 0U;
-    taskEXIT_CRITICAL();
+    taskEXIT_CRITICAL_FROM_ISR(saved);
+}
+
+/* 串口接收回调，在串口中断里执行 */
+static void RC_Remote_OnUartRx(void *context, const uint8_t *data, uint16_t size)
+{
+    RC_Remote_Input((RC_Remote_t *)context, data, size);
+}
+
+static void RC_Remote_OnUartError(void *context)
+{
+    RC_Remote_OnError((RC_Remote_t *)context);
+}
+
+BaseType_t RC_Remote_BindUart(RC_Remote_t *remote, UartInstance_t *uart)
+{
+    return UART_BindRx(uart, RC_Remote_OnUartRx, RC_Remote_OnUartError, remote);
 }
 
 uint8_t RC_Remote_Read(const RC_Remote_t *remote, DT7RecData *raw,

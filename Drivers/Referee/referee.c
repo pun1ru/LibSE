@@ -20,6 +20,22 @@ void Referee_Reset(Referee_t *referee)
     referee->frame_size = 0U;
 }
 
+/* 串口接收回调，在串口中断里执行 */
+static void Referee_OnUartRx(void *context, const uint8_t *data, uint16_t size)
+{
+    Referee_Input((Referee_t *)context, data, size);
+}
+
+static void Referee_OnUartError(void *context)
+{
+    Referee_Reset((Referee_t *)context);
+}
+
+BaseType_t Referee_BindUart(Referee_t *referee, UartInstance_t *uart)
+{
+    return UART_BindRx(uart, Referee_OnUartRx, Referee_OnUartError, referee);
+}
+
 void Referee_Input(Referee_t *referee, const uint8_t *data, uint16_t size)
 {
     for (uint16_t i = 0U; i < size; ++i) {

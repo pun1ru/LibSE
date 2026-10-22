@@ -54,6 +54,7 @@ typedef struct {
     uint16_t feedback_id;
     uint16_t zero_point;
     bool inverse;
+    ControlMode_t control_mode;
 } LKMotorConfig_t;
 
 typedef struct {

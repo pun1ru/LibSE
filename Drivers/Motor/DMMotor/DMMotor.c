@@ -123,9 +123,9 @@ void DMMotor_Feedback(DMMotor_t *motor, const uint8_t data[8],uint16_t rec_id)
 }
 
 void DMMotor_Init(DMMotor_t *motor, FDCAN_HandleTypeDef *can,
-                  const MotorConfig_t *config)
+                  const DMMotorConfig_t *config)
 {
-    MotorConfig_t saved_config = *config;
+    DMMotorConfig_t saved_config = *config;
     switch (saved_config.motor_type) {
     case DM_4310:
         saved_config.lsb.p_min = DM4310_P_MIN;
@@ -160,6 +160,7 @@ void DMMotor_Init(DMMotor_t *motor, FDCAN_HandleTypeDef *can,
     float gear_ratio = saved_config.motor_type == DM_4310 ? DM4310_GEAR_RATIO :
                                                            DM6006_GEAR_RATIO;
     Motor_BaseInit(&motor->base, can, config->zero_point, config->inverse, gear_ratio);
+    motor->base.motorcmd.control_mode = config->control_mode;
     motor->base.feedback_id = config->feedback_id;
     motor->base.motorops.enable = DMMotor_SendEnable;
     motor->base.motorops.disable = DMMotor_SendDisable;

@@ -32,16 +32,17 @@ typedef struct {
     uint16_t feedback_id;
     uint16_t zero_point;
     bool inverse;
+    ControlMode_t control_mode;
     LSB lsb;
-} MotorConfig_t;
+} DMMotorConfig_t;
 
 typedef struct {
     Motor_t base;
-    MotorConfig_t motor_config;
+    DMMotorConfig_t motor_config;
 } DMMotor_t;
 
 void DMMotor_Init(DMMotor_t *motor, FDCAN_HandleTypeDef *can,
-                  const MotorConfig_t *config);
+                  const DMMotorConfig_t *config);
 void DMMotor_SendCommand(DMMotor_t *motor);
 void DMMotor_Feedback(DMMotor_t *motor, const uint8_t data[8], uint16_t rec_id);
 

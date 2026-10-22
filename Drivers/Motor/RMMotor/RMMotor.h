@@ -36,6 +36,7 @@ typedef struct {
     uint8_t motor_id;
     uint16_t zero_point;
     bool inverse;
+    ControlMode_t control_mode;
 } RMMotorConfig_t;
 
 typedef struct RMMotor RMMotor_t;

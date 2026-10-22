@@ -25,7 +25,6 @@ void Shooter_Init(Shooter_t *shooter, const ShooterConfig_t *config)
     for (uint8_t i = 0U; i < config->motor.wheel_count; ++i)
     {
         Motor_t *motor = config->motor.wheel[i];
-        motor->motorcmd.control_mode = MODE_CURRENT;
         /* 反馈帧绑到各自的 CAN 实例，回调只把数据解析进电机对象 */
         (void)Motor_BindCan(motor, config->periph.can[i]);
         PIDInitialize(&shooter->controller.speed_pid[i], pid->kp, pid->ki, pid->kd,

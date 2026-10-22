@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include "dt7_remote_driver.h"
+#include "uart_driver.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -33,13 +34,18 @@ typedef struct {
 
 void RC_Init(RC_Remote_t *remote);
 
-/* Feed one packet popped from UART.  The input may contain partial or
-   multiple DBUS frames; the parser keeps state across calls. */
+/* 把解析器挂到串口口上，之后串口收到的包在中断里直接喂给 RC_Remote_Input，出错时调 RC_Remote_OnError
+ * 在 RC_Init 之后、串口启动接收之前调用，用法同 Motor_BindCan */
+BaseType_t RC_Remote_BindUart(RC_Remote_t *remote, UartInstance_t *uart);
+
+/* Feed one packet from UART.  The input may contain partial or
+   multiple DBUS frames; the parser keeps state across calls.
+   Runs in the UART interrupt (bound by RC_Remote_BindUart). */
 void RC_Remote_Input(RC_Remote_t *remote, const uint8_t *data,
                      uint16_t size);
 
 /* Drop an incomplete frame after a UART/DMA error so the next frame can
-   re-synchronise from a clean boundary. */
+   re-synchronise from a clean boundary.  Runs in the UART interrupt. */
 void RC_Remote_OnError(RC_Remote_t *remote);
 
 /* Copy the most recently decoded values.  Returns zero before the first valid
