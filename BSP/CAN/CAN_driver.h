@@ -107,7 +107,6 @@ BaseType_t CANTransmit_Enqueue(FDCAN_HandleTypeDef *hcan, uint16_t std_id,
 BaseType_t CANTransmit_EnqueueLength(FDCAN_HandleTypeDef *hcan,
                                      uint16_t std_id, const uint8_t *data,
                                      uint8_t len);
-void CANTransmit_QueueTask(void *argument);
 void CANTransmit_U8(FDCAN_HandleTypeDef *hcan, uint32_t std_id,
                     uint8_t aData[]);
 void CANTransmit_I16(FDCAN_HandleTypeDef *hcan, uint32_t std_id,

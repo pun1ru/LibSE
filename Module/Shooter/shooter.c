@@ -130,10 +130,24 @@ static void Shooter_Communicate(Shooter_t *shooter)
     first->motorops.sendgroupcommand(first);
 }
 
+/* 把各轮折算到发射方向的转速发给调试输出，队列没配或满了就算了，不影响控制 */
+static void Shooter_PublishDebug(const Shooter_t *shooter)
+{
+    uint8_t count = shooter->config.motor.wheel_count;
+
+    if (count > DEBUG_MSG_FLOATS_MAX)
+    {
+        count = DEBUG_MSG_FLOATS_MAX;
+    }
+    (void)Debug_Publish(shooter->config.comm.debug_queue, shooter->config.param.debug_channel,
+                        shooter->observer.speed_rpm, count);
+}
+
 void Shooter_Run(Shooter_t *shooter)
 {
     Shooter_TargetInput(shooter);
     Shooter_Estimate(shooter);
     Shooter_Control(shooter);
     Shooter_Communicate(shooter);
+    Shooter_PublishDebug(shooter);
 }

@@ -482,15 +482,15 @@ void CharacterToUIframe(ext_interaction_character_t *data_figure,uint16_t Subcon
 }
 /**
  * @brief  UI帧的发送
- * @param  UI的数组
+ * @param  uart: 裁判系统所在的串口实例
+ * @param  data_UIframe: UI帧的数组
  * @param  SubcontentID: 子命令ID
- * @param  UI帧的数组
- * @retval none
+ * @retval UART_TransmitDMAEx 的返回值，子命令ID无效返回 HAL_ERROR
  */
 
-void UIframeTransmit(uint8_t *data_UIframe,uint16_t SubcontentID)
+HAL_StatusTypeDef UIframeTransmit(UartInstance_t *uart,uint8_t *data_UIframe,uint16_t SubcontentID)
 {
-    RefereeFrame_t RefereeFrame;
+    RefereeFrame_t RefereeFrame = {0};
 	RefereeFrame.FrameHeader.SOF=0XA5;
 	RefereeFrame.FrameHeader.seq=0;
 	RefereeFrame.cmd_id=0X0301;
@@ -520,13 +520,15 @@ void UIframeTransmit(uint8_t *data_UIframe,uint16_t SubcontentID)
 			RefereeFrame.FrameHeader.data_length=51;
 		    memcpy(RefereeFrame.data,data_UIframe,51);
 		break;
+		default:
+			return HAL_ERROR;
 	}
 	
 	RefereeFrame.FrameHeader.seq++;
 	uint8_t transmitdata[128];
 	memcpy(transmitdata,&RefereeFrame,128);
     Append_CRC_Check_Sum(transmitdata, transmitdata[1]);
-	HAL_UART_Transmit_DMA(&REFEREE_UART,transmitdata,(transmitdata[1]+9));
+	return UART_TransmitDMAEx(uart,transmitdata,(uint16_t)(transmitdata[1]+9U));
 }
 /**
  * @brief  数据帧判断有无图形操作协议之外的数字

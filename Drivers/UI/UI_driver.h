@@ -4,8 +4,7 @@
 #include <stdint.h>
 #include <string.h>
 #include "judge_receive.h"
-#include "usart.h"
-#include "general_define.h"
+#include "uart_driver.h"
 #define LAYER_NUMBER   9
 #define COLOR_NUMBER   8
 
@@ -176,7 +175,10 @@ uint8_t DrawChar(ext_interaction_character_t *const character_frame,OperateType 
 
 void FigureToUIframe(uint8_t *data_figure,uint16_t SubcontentID,uint8_t *data_UIframe);
 void CharacterToUIframe(ext_interaction_character_t *data_figure,uint16_t SubcontentID,uint8_t *data_UIframe);
-void UIframeTransmit(uint8_t *data_UIframe,uint16_t SubcontentID);
+/* 发送一帧 UI，经 uart（裁判系统口）的 DMA 发出，数据在函数内拷进驱动自己的发送缓冲，返回后 data_UIframe 可以立刻复用
+ * 返回值沿用 UART_TransmitDMAEx：HAL_OK 已交给 DMA；HAL_BUSY 上一帧还在发，调用者自己决定丢帧还是下次重发；
+ * HAL_ERROR 参数无效或 SubcontentID 不是 0x0100~0x0104、0x0110 */
+HAL_StatusTypeDef UIframeTransmit(UartInstance_t *uart,uint8_t *data_UIframe,uint16_t SubcontentID);
 void UIframeClear(uint8_t *data_UIframe);
 
 uint8_t CheckEmpty(ext_interaction_figure_t *const ext_interaction_figure,uint16_t SubcontentID);

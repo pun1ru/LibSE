@@ -11,8 +11,8 @@
 #define CAN_RECOVER_COOLDOWN_MS         100U
 #define CAN_RECOVER_COOLDOWN_TICKS     pdMS_TO_TICKS(CAN_RECOVER_COOLDOWN_MS)
 
-static CanInstance_t *can_instances;
-static uint8_t can_instance_count;
+static CanInstance_t *can_registry;
+static uint8_t can_registry_count;
 
 BaseType_t CAN_BindRx(CanInstance_t *instance, uint16_t id,
                       CanRxHandler_t handler, void *context)
@@ -43,32 +43,32 @@ void CAN_DispatchRx(const CanInstance_t *instance, uint16_t id,
 
 void CAN_RegisterInstances(CanInstance_t *instances, uint8_t count)
 {
-    can_instances = instances;
-    can_instance_count = (instances != NULL) ? count : 0U;
+    can_registry = instances;
+    can_registry_count = (instances != NULL) ? count : 0U;
 }
 
 CanInstance_t *CAN_GetInstances(uint8_t *count)
 {
     if (count != NULL) {
-        *count = can_instance_count;
+        *count = can_registry_count;
     }
-    return can_instances;
+    return can_registry;
 }
 
 uint8_t CAN_GetInstanceCount(void)
 {
-    return can_instance_count;
+    return can_registry_count;
 }
 
 static CanInstance_t *CAN_InstanceFor(FDCAN_HandleTypeDef *hcan)
 {
-    if (hcan == NULL || can_instances == NULL) {
+    if (hcan == NULL || can_registry == NULL) {
         return NULL;
     }
 
-    for (uint8_t i = 0U; i < can_instance_count; ++i) {
-        if (can_instances[i].can == hcan) {
-            return &can_instances[i];
+    for (uint8_t i = 0U; i < can_registry_count; ++i) {
+        if (can_registry[i].can == hcan) {
+            return &can_registry[i];
         }
     }
     return NULL;
@@ -108,12 +108,12 @@ static HAL_StatusTypeDef CAN_ConfigFilter(const CanInstance_t *instance)
 
 void can_filter_init(void)
 {
-    if (can_instances == NULL) {
+    if (can_registry == NULL) {
         return;
     }
 
-    for (uint8_t i = 0U; i < can_instance_count; ++i) {
-        (void)CAN_ConfigFilter(&can_instances[i]);
+    for (uint8_t i = 0U; i < can_registry_count; ++i) {
+        (void)CAN_ConfigFilter(&can_registry[i]);
     }
 }
 
@@ -153,13 +153,13 @@ void CANInitialize(FDCAN_HandleTypeDef *hcan)
 
 void can_bsp_init(void)
 {
-    if (can_instances == NULL) {
+    if (can_registry == NULL) {
         return;
     }
 
     can_filter_init();
-    for (uint8_t i = 0U; i < can_instance_count; ++i) {
-        CanInstance_t *instance = &can_instances[i];
+    for (uint8_t i = 0U; i < can_registry_count; ++i) {
+        CanInstance_t *instance = &can_registry[i];
         if (instance->can == NULL) {
             continue;
         }
@@ -257,14 +257,14 @@ static HAL_StatusTypeDef CAN_Recover(CanInstance_t *instance)
 
 void CAN_MonitorPoll(void)
 {
-    if (can_instances == NULL)
+    if (can_registry == NULL)
     {
         return;
     }
 
-    for (uint8_t index = 0U; index < can_instance_count; ++index)
+    for (uint8_t index = 0U; index < can_registry_count; ++index)
     {
-        CanInstance_t *instance = &can_instances[index];
+        CanInstance_t *instance = &can_registry[index];
         CANTxMonitor *monitor = &instance->monitor;
         TickType_t now;
         uint8_t fifo_stuck;
@@ -369,21 +369,21 @@ uint8_t fdcanx_send_data(FDCAN_HandleTypeDef *hfdcan, uint16_t id,
 
 BaseType_t CANTransmit_QueueInit(void)
 {
-    if (can_instances == NULL || can_instance_count == 0U) {
+    if (can_registry == NULL || can_registry_count == 0U) {
         return pdFAIL;
     }
 
-    for (uint8_t i = 0U; i < can_instance_count; ++i) {
-        if (can_instances[i].tx_mutex == NULL)
+    for (uint8_t i = 0U; i < can_registry_count; ++i) {
+        if (can_registry[i].tx_mutex == NULL)
         {
-            can_instances[i].tx_mutex = xSemaphoreCreateMutex();
+            can_registry[i].tx_mutex = xSemaphoreCreateMutex();
         }
-        if (can_instances[i].tx_queue == NULL) {
-            can_instances[i].tx_queue = xQueueCreate(CAN_TX_QUEUE_LENGTH,
+        if (can_registry[i].tx_queue == NULL) {
+            can_registry[i].tx_queue = xQueueCreate(CAN_TX_QUEUE_LENGTH,
                                                      sizeof(CanTxFrame_t));
         }
-        if (can_instances[i].tx_mutex == NULL ||
-            can_instances[i].tx_queue == NULL)
+        if (can_registry[i].tx_mutex == NULL ||
+            can_registry[i].tx_queue == NULL)
         {
             return pdFAIL;
         }
@@ -481,25 +481,6 @@ BaseType_t CANTransmit_Enqueue(FDCAN_HandleTypeDef *hcan, uint16_t std_id,
 {
     return CANTransmit_EnqueueLength(hcan, std_id, data,
                                      CAN_FRAME_DATA_MAX);
-}
-
-void CANTransmit_QueueTask(void *argument)
-{
-    FDCAN_HandleTypeDef *hcan = (FDCAN_HandleTypeDef *)argument;
-    QueueHandle_t queue = CANTransmit_QueueFor(hcan);
-    CanTxFrame_t frame;
-
-    if (queue == NULL) {
-        vTaskDelete(NULL);
-        return;
-    }
-
-    for (;;) {
-        if (xQueueReceive(queue, &frame, portMAX_DELAY) == pdPASS) {
-            (void)fdcanx_send_data(frame.can, frame.id, frame.data,
-                                   frame.length);
-        }
-    }
 }
 
 void CANTransmit_U8(FDCAN_HandleTypeDef *hcan, uint32_t std_id,

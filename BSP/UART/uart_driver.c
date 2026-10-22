@@ -57,16 +57,16 @@ static uint8_t uart_rx_dma[UART_MAX_INSTANCES][2][UART_DMA_BUFFER_SIZE]
 static uint8_t uart_tx_dma[UART_MAX_INSTANCES][UART_TX_BUFFER_SIZE]
     __attribute__((section(".bss.bsp_uart_dma"), aligned(32)));
 
-static UartInstance_t *uart_instances[UART_MAX_INSTANCES];
-static uint8_t uart_instance_count;
+static UartInstance_t *uart_registry[UART_MAX_INSTANCES];
+static uint8_t uart_registry_count;
 
 static UartInstance_t *UART_Find(UART_HandleTypeDef *huart)
 {
     uint8_t i;
 
-    for (i = 0U; i < uart_instance_count; ++i) {
-        if (uart_instances[i] != NULL && uart_instances[i]->huart == huart) {
-            return uart_instances[i];
+    for (i = 0U; i < uart_registry_count; ++i) {
+        if (uart_registry[i] != NULL && uart_registry[i]->huart == huart) {
+            return uart_registry[i];
         }
     }
     return NULL;
@@ -91,32 +91,32 @@ void UART_Register(UartInstance_t *uart)
 
     /* Re-registering an object is harmless and avoids allocating a second
        buffer pair when init code is called more than once. */
-    for (i = 0U; i < uart_instance_count; ++i) {
-        if (uart_instances[i] == uart ||
-            (uart_instances[i] != NULL &&
-             uart_instances[i]->huart == uart->huart)) {
-            index = uart_instances[i]->instance_index;
-            uart_instances[i] = uart;
+    for (i = 0U; i < uart_registry_count; ++i) {
+        if (uart_registry[i] == uart ||
+            (uart_registry[i] != NULL &&
+             uart_registry[i]->huart == uart->huart)) {
+            index = uart_registry[i]->instance_index;
+            uart_registry[i] = uart;
             UART_AttachBuffers(uart, index);
             return;
         }
     }
 
     index = UART_MAX_INSTANCES;
-    for (i = 0U; i < uart_instance_count; ++i) {
-        if (uart_instances[i] == NULL) {
+    for (i = 0U; i < uart_registry_count; ++i) {
+        if (uart_registry[i] == NULL) {
             index = i;
             break;
         }
     }
     if (index == UART_MAX_INSTANCES) {
-        if (uart_instance_count >= UART_MAX_INSTANCES) {
+        if (uart_registry_count >= UART_MAX_INSTANCES) {
             return;
         }
-        index = uart_instance_count++;
+        index = uart_registry_count++;
     }
 
-    uart_instances[index] = uart;
+    uart_registry[index] = uart;
     UART_AttachBuffers(uart, index);
     uart->rx_started = 0U;
     uart->tx_busy = 0U;
@@ -131,12 +131,12 @@ void UART_Unregister(UartInstance_t *uart)
         return;
     }
 
-    for (i = 0U; i < uart_instance_count; ++i) {
-        if (uart_instances[i] == uart) {
-            uart_instances[i] = NULL;
-            while (uart_instance_count != 0U &&
-                   uart_instances[uart_instance_count - 1U] == NULL) {
-                uart_instance_count--;
+    for (i = 0U; i < uart_registry_count; ++i) {
+        if (uart_registry[i] == uart) {
+            uart_registry[i] = NULL;
+            while (uart_registry_count != 0U &&
+                   uart_registry[uart_registry_count - 1U] == NULL) {
+                uart_registry_count--;
             }
             uart->registered = 0U;
             uart->rx_started = 0U;
@@ -155,8 +155,26 @@ BaseType_t UART_BindRx(UartInstance_t *uart, UartRxCallback_t on_receive,
 
     uart->on_receive = on_receive;
     uart->on_error = on_error;
-    uart->context = context;
+    uart->rx_context = context;
     return pdPASS;
+}
+
+BaseType_t UART_BindTx(UartInstance_t *uart, UartTxCallback_t on_transmit, void *context)
+{
+    if (uart == NULL || on_transmit == NULL || uart->on_transmit != NULL) {
+        return pdFAIL;
+    }
+
+    uart->on_transmit = on_transmit;
+    uart->tx_context = context;
+    return pdPASS;
+}
+
+void UART_DispatchTx(UartInstance_t *uart)
+{
+    if (uart != NULL && uart->registered != 0U && uart->on_transmit != NULL) {
+        uart->on_transmit(uart->tx_context, uart);
+    }
 }
 
 HAL_StatusTypeDef UART_StartReceiveEx(UartInstance_t *uart)
@@ -284,7 +302,7 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t size)
         UartMonitor_RecordRxOverflow(&uart->monitor);
     } else if (uart->on_receive != NULL) {
         SCB_InvalidateDCache_by_Addr(completed, (int32_t)size);
-        uart->on_receive(uart->context, completed, size);
+        uart->on_receive(uart->rx_context, completed, size);
     }
 }
 
@@ -315,7 +333,7 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
     if (uart->rx_started != 0U && huart->RxState == HAL_UART_STATE_READY) {
         UartMonitor_RecordRxError(&uart->monitor);
         if (uart->on_error != NULL) {
-            uart->on_error(uart->context);
+            uart->on_error(uart->rx_context);
         }
         uart->rx_started = 0U;
         if (UART_StartReceiveEx(uart) != HAL_OK) {

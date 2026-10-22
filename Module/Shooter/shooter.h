@@ -6,6 +6,7 @@
 #include "CAN_driver.h"
 #include "FreeRTOS.h"
 #include "Motor.h"
+#include "debug.h"
 #include "pid.h"
 #include "queue.h"
 
@@ -72,6 +73,7 @@ typedef struct {
 /*--------------------------------------通信层--------------------------------------*/
 typedef struct {
     QueueHandle_t cmd_queue;    /* 元素 ShooterCmdMail_t，长度 1 覆盖式，由 System 层创建 */
+    QueueHandle_t debug_queue;  /* 元素 DebugMsg_t，可为 NULL（不输出调试数据），由 System 层创建 */
 } ShooterComm_t;
 
 /*--------------------------------------电机层--------------------------------------*/
@@ -93,6 +95,7 @@ typedef struct {
     float standby_rpm;                  /* 待机转速，有符号，沿发射方向为正 */
     uint32_t cmd_timeout_ms;            /* 命令超过这个时间没更新就按失联进保护 */
     uint16_t feedback_timeout_cycles;   /* 电机反馈连续这么多个周期没更新就按失联，输出清零 */
+    uint8_t debug_channel;              /* 调试输出的起始通道，各轮转速依次占 wheel_count 个通道 */
 } ShooterParam_t;
 
 typedef struct {
