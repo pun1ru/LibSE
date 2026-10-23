@@ -8,13 +8,6 @@
 #undef REFEREE_DMA_SIZE
 #define REFEREE_DMA_SIZE (256)
 
-/*
-Version:2025.07.21
-修改日期：2025.07.21
-修改人：Xu
-注意：
-*/
-
 /*--------------CmdID(2-Byte)----------------*/
 #define GAME_STATUS             0x0001          //比赛状态数据，1Hz 周期发送
 #define GAME_RESULT             0x0002          //比赛结果数据，比赛结束后发送

@@ -73,10 +73,34 @@ ext_robot_custom_data_t          ext_robot_custom_data;      //0X0309
 ext_client_custom_robot_data_t   ext_client_custom_robot_data; //0X0311
 ext_custom_client_data_t         ext_custom_client_data;     //0X0306
 
-static uint8_t RefereeCopyFixedData(void *dest, uint16_t dest_size, uint16_t data_length, const uint8_t *src)
+/* V1.3.0 协议的命令码总览表和详细字段表对下面四个命令给的长度不一致，本工程按详细字段表定义结构体
+ * 这四个命令也接受总览表的长度：数据比结构体短，缺少的尾部字段清零；数据比结构体长，多出的尾部忽略
+ * 其余命令仍要求长度严格相等，不符就丢弃整帧 */
+static uint8_t RefereeLengthTolerated(uint16_t cmd_id, uint16_t dest_size, uint16_t data_length)
+{
+    switch (cmd_id) {
+    case ROBOT_POS:
+        return (uint8_t)((dest_size == ROBOT_POS_DATA_SIZE) && (data_length == 16U));
+    case PROJECTILE_ALLOWANCE:
+        return (uint8_t)((dest_size == PROJECTILE_ALLOWANCE_DATA_SIZE) && (data_length == 6U));
+    case MAP_COMMAND:
+        return (uint8_t)((dest_size == MAP_COMMAND_DATA_SIZE) && (data_length == 15U));
+    case MAP_DATA:
+        return (uint8_t)((dest_size == MAP_DATA_DATA_SIZE) && (data_length == 103U));
+    default:
+        return 0U;
+    }
+}
+
+static uint8_t RefereeCopyFixedData(uint16_t cmd_id, void *dest, uint16_t dest_size, uint16_t data_length, const uint8_t *src)
 {
     if (data_length != dest_size) {
-        return 0U;
+        if (RefereeLengthTolerated(cmd_id, dest_size, data_length) == 0U) {
+            return 0U;
+        }
+        memset(dest, 0, dest_size);
+        memcpy(dest, src, (data_length < dest_size) ? data_length : dest_size);
+        return 1U;
     }
 
     memcpy(dest, src, dest_size);
@@ -166,99 +190,99 @@ void Referee_Receive_Data_Processing(uint16_t SOF, uint16_t CmdID, uint8_t* judg
     {
     //1.	比赛状态(0x0001)	1Hz
     case GAME_STATUS:
-        RefereeCopyFixedData(&ext_game_status, sizeof(ext_game_status), data_length, payload);
+        RefereeCopyFixedData(CmdID, &ext_game_status, sizeof(ext_game_status), data_length, payload);
         break;
 
     //2.	比赛结果(0x0002)
     case GAME_RESULT:
-        RefereeCopyFixedData(&ext_game_result, sizeof(ext_game_result), data_length, payload);
+        RefereeCopyFixedData(CmdID, &ext_game_result, sizeof(ext_game_result), data_length, payload);
         break;
 
     //3.	比赛机器人血量数据（0x0003）
     case ROBOT_HP:
-        RefereeCopyFixedData(&ext_game_robot_HP, sizeof(ext_game_robot_HP), data_length, payload);
+        RefereeCopyFixedData(CmdID, &ext_game_robot_HP, sizeof(ext_game_robot_HP), data_length, payload);
         break;
 
     //4.	场地事件数据（0x0101）
     case EVENT_DATA:
-        RefereeCopyFixedData(&ext_event_data, sizeof(ext_event_data), data_length, payload);
+        RefereeCopyFixedData(CmdID, &ext_event_data, sizeof(ext_event_data), data_length, payload);
         break;
 
     //6.    裁判警告数据(0x0104)
     case REFEREE_WARNING:
-        RefereeCopyFixedData(&ext_referee_warning, sizeof(ext_referee_warning), data_length, payload);
+        RefereeCopyFixedData(CmdID, &ext_referee_warning, sizeof(ext_referee_warning), data_length, payload);
         break;
 
     //7.    飞镖(0x0105)
     case DART_INFO:
-        RefereeCopyFixedData(&ext_dart_info, sizeof(ext_dart_info), data_length, payload);
+        RefereeCopyFixedData(CmdID, &ext_dart_info, sizeof(ext_dart_info), data_length, payload);
         break;
 
     //8.	机器人状态数据（0x0201）
     case ROBOT_STATUS:
-        RefereeCopyFixedData(&ext_game_robot_status, sizeof(ext_game_robot_status), data_length, payload);
+        RefereeCopyFixedData(CmdID, &ext_game_robot_status, sizeof(ext_game_robot_status), data_length, payload);
         break;
 
     //9.	实时功率热量数据(0x0202)
     case POWER_HEAT_DATA:
-        RefereeCopyFixedData(&ext_power_heat_data, sizeof(ext_power_heat_data), data_length, payload);
+        RefereeCopyFixedData(CmdID, &ext_power_heat_data, sizeof(ext_power_heat_data), data_length, payload);
         break;
 
     //10.机器人位置数据(0X0203)
     case ROBOT_POS:
-        RefereeCopyFixedData(&ext_robot_pos, sizeof(ext_robot_pos), data_length, payload);
+        RefereeCopyFixedData(CmdID, &ext_robot_pos, sizeof(ext_robot_pos), data_length, payload);
         break;
 
     //11.机器人增益数据(0X0204)
     case BUFF:
-        RefereeCopyFixedData(&ext_buff, sizeof(ext_buff), data_length, payload);
+        RefereeCopyFixedData(CmdID, &ext_buff, sizeof(ext_buff), data_length, payload);
         break;
 
     //13.伤害状态数据(0X0206)
     case HURT_DATA:
-        RefereeCopyFixedData(&ext_hurt_data, sizeof(ext_hurt_data), data_length, payload);
+        RefereeCopyFixedData(CmdID, &ext_hurt_data, sizeof(ext_hurt_data), data_length, payload);
         break;
 
     //14.实时射击数据(0X0207)
     case SHOOT_DATA:
-        if (RefereeCopyFixedData(&ext_shoot_data, sizeof(ext_shoot_data), data_length, payload)) {
+        if (RefereeCopyFixedData(CmdID, &ext_shoot_data, sizeof(ext_shoot_data), data_length, payload)) {
             shit_dan = 1;
         }
         break;
 
     //15.子弹剩余发送数(0X0208)
     case PROJECTILE_ALLOWANCE:
-        RefereeCopyFixedData(&ext_projectile_allowance, sizeof(ext_projectile_allowance), data_length, payload);
+        RefereeCopyFixedData(CmdID, &ext_projectile_allowance, sizeof(ext_projectile_allowance), data_length, payload);
         break;
 
     //16.机器人 RFID 状态(0X0209)
     case RFID_STATUS:
-        RefereeCopyFixedData(&ext_rfid_status, sizeof(ext_rfid_status), data_length, payload);
+        RefereeCopyFixedData(CmdID, &ext_rfid_status, sizeof(ext_rfid_status), data_length, payload);
         break;
 
     //17.飞镖机器人客户端指令数据(0X020A)
     case DART_CLIENT_CMD:
-        RefereeCopyFixedData(&ext_dart_client_cmd, sizeof(ext_dart_client_cmd), data_length, payload);
+        RefereeCopyFixedData(CmdID, &ext_dart_client_cmd, sizeof(ext_dart_client_cmd), data_length, payload);
         break;
 
     //18.地面机器人位置数据(0X020B)
     case GROUND_ROBOT_POS:
-        RefereeCopyFixedData(&ext_ground_robot_pos, sizeof(ext_ground_robot_pos), data_length, payload);
+        RefereeCopyFixedData(CmdID, &ext_ground_robot_pos, sizeof(ext_ground_robot_pos), data_length, payload);
         break;
 
     //19.雷达标记进度数据(0X020C)
     case RADAR_MARK_DATA:
-        RefereeCopyFixedData(&ext_radar_mark_data, sizeof(ext_radar_mark_data), data_length, payload);
+        RefereeCopyFixedData(CmdID, &ext_radar_mark_data, sizeof(ext_radar_mark_data), data_length, payload);
         break;
 
     //20.哨兵自主决策信息同步数据(0X020D)
     case SENTRY_INFO:
-        RefereeCopyFixedData(&ext_sentry_info, sizeof(ext_sentry_info), data_length, payload);
+        RefereeCopyFixedData(CmdID, &ext_sentry_info, sizeof(ext_sentry_info), data_length, payload);
         break;
 
     //21.雷达自主决策信息同步数据(0X020E)
     case RADAR_INFO:
-        RefereeCopyFixedData(&ext_radar_info, sizeof(ext_radar_info), data_length, payload);
+        RefereeCopyFixedData(CmdID, &ext_radar_info, sizeof(ext_radar_info), data_length, payload);
         break;
 
     //22.机器人交互数据(0X0301)
@@ -273,27 +297,27 @@ void Referee_Receive_Data_Processing(uint16_t SOF, uint16_t CmdID, uint8_t* judg
 
     //23.选手端小地图交互数据(0X0303)
     case MAP_COMMAND:
-        RefereeCopyFixedData(&ext_map_command, sizeof(ext_map_command), data_length, payload);
+        RefereeCopyFixedData(CmdID, &ext_map_command, sizeof(ext_map_command), data_length, payload);
         break;
 
     //选手端小地图可接收机器人数据(0x0305)
     case MAP_ROBOT_DATA:
-        RefereeCopyFixedData(&ext_map_robot_data, sizeof(ext_map_robot_data), data_length, payload);
+        RefereeCopyFixedData(CmdID, &ext_map_robot_data, sizeof(ext_map_robot_data), data_length, payload);
         break;
 
     //自定义控制器与选手端交互数据(0x0306)
     case CUSTOM_CLIENT_DATA:
-        RefereeCopyFixedData(&ext_custom_client_data, sizeof(ext_custom_client_data), data_length, payload);
+        RefereeCopyFixedData(CmdID, &ext_custom_client_data, sizeof(ext_custom_client_data), data_length, payload);
         break;
 
     //选手端小地图接收哨兵数据(0X0307)
     case MAP_DATA:
-        RefereeCopyFixedData(&ext_map_data, sizeof(ext_map_data), data_length, payload);
+        RefereeCopyFixedData(CmdID, &ext_map_data, sizeof(ext_map_data), data_length, payload);
         break;
 
     //选手端小地图接收机器人数据(0X0308)
     case CUSTOM_INFO:
-        RefereeCopyFixedData(&ext_custom_info, sizeof(ext_custom_info), data_length, payload);
+        RefereeCopyFixedData(CmdID, &ext_custom_info, sizeof(ext_custom_info), data_length, payload);
         break;
 
     //机器人可通过图传链路向对应的操作手选手端连接的自定义控制器发送数据(0x0309)
