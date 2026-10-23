@@ -92,7 +92,7 @@ typedef struct {
     float gimbal_to_world[3][3];                ///< 末端 -> 世界，由 INS 四元数构造
     float gimbal_to_base[3][3];                 ///< 末端 -> 底盘，由 DH 正运动学构造
     float base_to_world[3][3];                  ///< 底盘 -> 世界，由前两者反解
-    float gyro_yaw_frame_dps[3];                ///< INS 角速度转到 yaw 关节坐标系 {J1}，deg/s；z 分量是 yaw 轴上的惯性角速度（含底盘自身转动），底盘不动时应等于 joint_omega_dps[GIMBAL_YAW]
+    float gyro_yaw_frame_dps[3];                ///< INS 角速度转到 yaw 关节坐标系 {J1}，deg/s；z 分量是 yaw 轴上的惯性角速度（含底盘自身转动），底盘不动时应等于 joint_omega_dps[GIMBAL_YAW]；y 分量是 pitch 轴上的惯性角速度（实测符号），底盘不动时应等于 joint_omega_dps[GIMBAL_PITCH]
     uint8_t valid;                             ///< INS 就绪且本周期取到数据
 } GimbalObserver_t;
 
@@ -180,6 +180,7 @@ typedef struct {
      * 窗口越长，角度量化噪声越小（量化步长 / 窗口），但平均延迟约半个窗口 */
     uint16_t speed_diff_div[GIMBAL_AXIS_COUNT];
     uint8_t yaw_speed_use_gyro; ///< 非 0 时 yaw 速度环反馈用 IMU 角速度转到 {J1} 的 z 分量，0 用关节角速度（电机回传或差分）
+    uint8_t pitch_speed_use_gyro; ///< 非 0 时 pitch 速度环反馈用 IMU 角速度转到 {J1} 的 y 分量，0 用关节角速度（电机回传或差分）
     float period_s;             ///< Gimbal_Run 的调用周期
     uint32_t cmd_timeout_ms;    ///< 命令超过这个时间没更新就按失联进保护
     uint8_t force_zero_output;  ///< 非 0 时写给电机的指令强制为 0，控制层照常计算，axis[].output 仍是 PID 结果，调试用
@@ -209,6 +210,7 @@ typedef struct {
     uint32_t cmd_timeout_ms;
     uint8_t force_zero_output;
     uint8_t yaw_speed_use_gyro;
+    uint8_t pitch_speed_use_gyro;
     uint16_t speed_diff_div[GIMBAL_AXIS_COUNT];     ///< 差分窗口，0 表示用电机回传速度
     uint16_t speed_diff_count[GIMBAL_AXIS_COUNT];   ///< 当前窗口已累计的估计次数
     float speed_diff_last_deg[GIMBAL_AXIS_COUNT];   ///< 上一个窗口末的关节角

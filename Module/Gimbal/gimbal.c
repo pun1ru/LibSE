@@ -13,6 +13,7 @@
 #define GIMBAL_YAW_DISABLE_SLOT         0U
 #define GIMBAL_YAW_CLEAR_SLOT           8U
 
+#define GIMBAL_FRAME_Y_INDEX    1U      /* 向量的 y 分量下标 */
 #define GIMBAL_FRAME_Z_INDEX    2U      /* 向量的 z 分量下标 */
 #define GIMBAL_HORIZON_MIN      0.02f   /* 指向向量水平投影下限，目标接近天顶时冻结 yaw */
 #define GIMBAL_WORLD_PITCH_MAX  90.0f   /* 世界系 pitch 目标的物理范围 */
@@ -143,6 +144,7 @@ void Gimbal_Init(Gimbal_t *gimbal, const GimbalConfig_t *config)
     gimbal->cmd_timeout_ms = config->param.cmd_timeout_ms;
     gimbal->force_zero_output = config->param.force_zero_output;
     gimbal->yaw_speed_use_gyro = config->param.yaw_speed_use_gyro;
+    gimbal->pitch_speed_use_gyro = config->param.pitch_speed_use_gyro;
     gimbal->state = config->state.init_state;
     gimbal->yaw_enable_divider = GIMBAL_YAW_ENABLE_RESEND_DIV - 1U;
     /* 反馈帧绑到各自的 CAN 实例，回调只把数据解析进电机对象 */
@@ -398,8 +400,13 @@ void Gimbal_Control(Gimbal_t *gimbal)
         float yaw_feedback_dps = (gimbal->yaw_speed_use_gyro != 0U) ?
                                  obs->gyro_yaw_frame_dps[GIMBAL_FRAME_Z_INDEX] :
                                  obs->joint_omega_dps[GIMBAL_YAW];
+        /* pitch 速度反馈：陀螺在 {J1} 系的 y 分量，口径同 joint_omega_dps
+         * 按 DH 推导转轴应为 -y，但上板实测取负是正反馈，所以直接取 +y */
+        float pitch_feedback_dps = (gimbal->pitch_speed_use_gyro != 0U) ?
+                                   obs->gyro_yaw_frame_dps[GIMBAL_FRAME_Y_INDEX] :
+                                   obs->joint_omega_dps[GIMBAL_PITCH];
         Gimbal_SpeedLoop(yaw, ref->omega_dps[GIMBAL_YAW], yaw_feedback_dps);
-        Gimbal_SpeedLoop(pitch, ref->omega_dps[GIMBAL_PITCH], obs->joint_omega_dps[GIMBAL_PITCH]);
+        Gimbal_SpeedLoop(pitch, ref->omega_dps[GIMBAL_PITCH], pitch_feedback_dps);
     }
 }
 
