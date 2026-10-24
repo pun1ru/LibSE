@@ -18,6 +18,8 @@
 #define RM_C610_GEAR_RATIO 36.0f
 #define RM_C620_GEAR_RATIO (3591.0f / 187.0f)
 #define RM_GM6020_GEAR_RATIO 1.0f
+/* 转矩常数取自 GM6020 手册 741 mN*m/A，无减速箱，输出轴口径；C610/C620 手册未给，不提供 */
+#define RM_GM6020_TORQUE_CONSTANT 0.741f
 
 typedef enum {
     RM_C610,

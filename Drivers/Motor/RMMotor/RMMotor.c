@@ -86,6 +86,10 @@ void RMMotor_Init(RMMotor_t *motor, RMMotorGroup_t *group,
                                                        RM_GM6020_GEAR_RATIO;
     Motor_BaseInit(&motor->base, group->can, config->zero_point, config->inverse, gear_ratio);
     motor->base.motorcmd.control_mode = config->control_mode;
+    if (config->motor_type == RM_GM6020)
+    {
+        motor->base.torque_constant = RM_GM6020_TORQUE_CONSTANT;
+    }
     motor->base.feedback_id = config->motor_type == RM_GM6020 ?
                               (uint16_t)(0x204U + config->motor_id) :
                               (uint16_t)(RM_C620_FEEDBACK_ID_BASE + config->motor_id);
@@ -154,6 +158,7 @@ void RMMotor_Feedback(RMMotor_t *motor, const uint8_t data[8], uint16_t rec_id)
         break;
     case RM_GM6020:
         feedback->current = (float)current_raw * RM_GM6020_CURRENT_PER_LSB;
+        feedback->torque_nm = feedback->current * motor->base.torque_constant;
         feedback->temp = (float)data[6];
         break;
     default:
