@@ -128,6 +128,18 @@ void DMMotor_Init(DMMotor_t *motor, FDCAN_HandleTypeDef *can,
     DMMotorConfig_t saved_config = *config;
     switch (saved_config.motor_type) {
     case DM_4310:
+#if DM4310_USE_LEGACY_LSB
+        saved_config.lsb.p_min = DM4310_LEGACY_P_MIN;
+        saved_config.lsb.p_max = DM4310_LEGACY_P_MAX;
+        saved_config.lsb.v_min = DM4310_LEGACY_V_MIN;
+        saved_config.lsb.v_max = DM4310_LEGACY_V_MAX;
+        saved_config.lsb.kp_min = DM4310_LEGACY_KP_MIN;
+        saved_config.lsb.kp_max = DM4310_LEGACY_KP_MAX;
+        saved_config.lsb.kd_min = DM4310_LEGACY_KD_MIN;
+        saved_config.lsb.kd_max = DM4310_LEGACY_KD_MAX;
+        saved_config.lsb.t_min = DM4310_LEGACY_T_MIN;
+        saved_config.lsb.t_max = DM4310_LEGACY_T_MAX;
+#else
         saved_config.lsb.p_min = DM4310_P_MIN;
         saved_config.lsb.p_max = DM4310_P_MAX;
         saved_config.lsb.v_min = DM4310_V_MIN;
@@ -138,6 +150,7 @@ void DMMotor_Init(DMMotor_t *motor, FDCAN_HandleTypeDef *can,
         saved_config.lsb.kd_max = DM4310_KD_MAX;
         saved_config.lsb.t_min = DM4310_T_MIN;
         saved_config.lsb.t_max = DM4310_T_MAX;
+#endif
         break;
     case DM_6006:
         saved_config.lsb.p_min = DM6006_P_MIN;

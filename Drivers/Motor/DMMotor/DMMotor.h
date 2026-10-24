@@ -50,16 +50,30 @@ void DMMotor_Feedback(DMMotor_t *motor, const uint8_t data[8], uint16_t rec_id);
 #define DM4310_GEAR_RATIO 10.0f
 #define DM6006_GEAR_RATIO 6.0f
 
-#define DM4310_P_MIN -3.14f
-#define DM4310_P_MAX 3.14f
-#define DM4310_V_MIN -30.0f
-#define DM4310_V_MAX 30.0f
+#define DM4310_P_MIN -3.14159f
+#define DM4310_P_MAX 3.14159f
+#define DM4310_V_MIN -45.0f
+#define DM4310_V_MAX 45.0f
 #define DM4310_KP_MIN 0.0f
 #define DM4310_KP_MAX 500.0f
 #define DM4310_KD_MIN 0.0f
 #define DM4310_KD_MAX 5.0f
-#define DM4310_T_MIN -11.0f
-#define DM4310_T_MAX 11.0f
+#define DM4310_T_MIN -18.0f
+#define DM4310_T_MAX 18.0f
+
+/* engineer26orangediy 工程使用的 DM4310 LSB，与电机上位机里的 PMAX/VMAX/TMAX 必须一致 */
+#define DM4310_LEGACY_P_MIN -12.5f
+#define DM4310_LEGACY_P_MAX 12.5f
+#define DM4310_LEGACY_V_MIN -30.0f
+#define DM4310_LEGACY_V_MAX 30.0f
+#define DM4310_LEGACY_KP_MIN 0.0f
+#define DM4310_LEGACY_KP_MAX 500.0f
+#define DM4310_LEGACY_KD_MIN 0.0f
+#define DM4310_LEGACY_KD_MAX 5.0f
+#define DM4310_LEGACY_T_MIN -10.0f
+#define DM4310_LEGACY_T_MAX 10.0f
+/* 暂时使用旧工程的 LSB：1 用 DM4310_LEGACY_*，0 用上面的 DM4310_* */
+#define DM4310_USE_LEGACY_LSB 0
 
 /* MIT limits must match the values configured in the motor controller. */
 #define DM6006_P_MIN -3.14f

@@ -14,6 +14,13 @@ static uint8_t RMMotor_Slot(uint8_t motor_id)
 static int16_t RMMotor_Setpoint(const RMMotor_t *motor)
 {
     float value = motor->base.motorcmd.current;
+    /* 力矩模式：N*m 按转矩常数换成电流 A，再按 LSB 换成协议值；只对提供转矩常数的电流模式电机有效 */
+    if (motor->base.motorcmd.control_mode == MODE_TORQUE &&
+        motor->motor_config.mode == RM_CURRENT && motor->base.torque_constant > 0.0f)
+    {
+        value = motor->base.motorcmd.torque / motor->base.torque_constant /
+                RM_GM6020_CURRENT_PER_LSB;
+    }
     if (motor->base.inverse && motor->motor_config.mode == RM_CURRENT)
     {
         value = -value;

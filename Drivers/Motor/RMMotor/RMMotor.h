@@ -71,6 +71,8 @@ void RMMotor_Init(RMMotor_t *motor, RMMotorGroup_t *group,
 /* motorcmd.current is the signed protocol setpoint: C610 +/-10000,
  * C620 +/-16384, GM6020 current +/-16384 or voltage +/-25000.
  * Both send callbacks transmit all four slots of the motor's group.
+ * GM6020 in RM_CURRENT mode also accepts MODE_TORQUE: motorcmd.torque (N*m) is
+ * converted with RM_GM6020_TORQUE_CONSTANT, so +/-16384 is about +/-2.22 N*m.
  */
 void RMMotor_SendGroupCommand(RMMotor_t *motor);
 void RMMotor_Feedback(RMMotor_t *motor, const uint8_t data[8], uint16_t rec_id);
