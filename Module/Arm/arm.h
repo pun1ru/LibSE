@@ -1,21 +1,35 @@
 #ifndef ARM_H
 #define ARM_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
 #include "CAN_driver.h"
 #include "Motor.h"
+#include "dh.h"
 
-/* 七轴臂模块，对象是 J0 ~ J6 七个关节电机
- * 每个控制周期调用 Arm_Run，目前只有保护状态：每个电机发一帧各自控制模式下的零指令
+/* 七轴臂模块，对象是 J0 ~ J6 七个关节电机，角度统一 deg，位置统一 m
+ * 每个控制周期调用 Arm_Run，内部依次：观测 -> 控制 -> 通信
  * 电机在 App 层的 motor_init 里创建，反馈帧在 Arm_Init 里绑到各自的 CAN 实例
- * 零指令保持电机初始化时的控制模式，只把指令量清零：力矩模式发零力矩，MIT 模式发零位置零速度零增益零力矩
+ * 模块只定义类型和算法，DH 表、零点、角色这些具体值全部由 System 层的 module_init 在配置里给出
+ * 主从角色在初始化前由配置定下，之后不再修改：主机状态 PROTECTED/ENABLE/FEEDBACK/MASTER，从机状态 PROTECTED/ENABLE/AUTO/SERVANT
  */
 #define ARM_JOINT_COUNT   7U
+#define ARM_VECTOR_DIM    3U    /* 位置、欧拉角的分量数 */
 
 /*--------------------------------------状态机--------------------------------------*/
 typedef enum {
-    ARM_PROTECTED   /* 保护：每个电机发零指令 */
+    ARM_ROLE_MASTER = 0,    /* 主机：读操作者输入，向从机发布关节目标 */
+    ARM_ROLE_SERVANT        /* 从机：接收主机目标，驱动关节 */
+} ArmRole_t;
+
+typedef enum {
+    ARM_PROTECTED = 0,  /* 保护：每个电机发零指令，主从共有 */
+    ARM_ENABLE,         /* 使能：电机使能并发零指令，主从共有 */
+    ARM_FEEDBACK,       /* 主机：只读反馈，关节自由 */
+    ARM_MASTER,         /* 主机：主机正常工作 */
+    ARM_AUTO,           /* 从机：从机自主运行 */
+    ARM_SERVANT         /* 从机：跟随主机 */
 } ArmState_t;
 
 typedef enum {
@@ -29,7 +43,7 @@ typedef enum {
 } ArmJoint_t;
 
 /*--------------------------------------对象与构造参数--------------------------------------*/
-/* 初始化参数按依赖从底到顶分层：外设 -> 电机 -> 状态，没有的层不写 */
+/* 初始化参数按依赖从底到顶分层：外设 -> 电机 -> 状态 -> 参数，没有的层不写 */
 
 /*--------------------------------------外设层--------------------------------------*/
 typedef struct {
@@ -43,24 +57,43 @@ typedef struct {
 
 /*--------------------------------------状态层--------------------------------------*/
 typedef struct {
-    ArmState_t init_state;
+    ArmRole_t role;             /* 初始化前定下，之后不得修改 */
+    ArmState_t init_state;      /* 必须属于 role 的状态集 */
 } ArmStateInit_t;
+
+/*--------------------------------------参数层--------------------------------------*/
+/* DH 表为改进 DH，每个关节一行，第 i 行的 q 对应第 i 个关节，末端坐标系即 {J6}
+ * zero_point 是各关节机械零位对应的电机原始编码器值，Arm_Init 写入电机，覆盖电机初始化时的默认值 */
+typedef struct {
+    DH_Param_t dh[ARM_JOINT_COUNT];
+    uint16_t zero_point[ARM_JOINT_COUNT];
+} ArmParam_t;
 
 typedef struct {
     ArmPeriph_t periph;
     ArmMotor_t motor;
     ArmStateInit_t state;
+    ArmParam_t param;
 } ArmConfig_t;
+
+/*--------------------------------------观测--------------------------------------*/
+typedef struct {
+    float joint_deg[ARM_JOINT_COUNT];                   /* 关节角，方向已按 Motor_Direction 折算 */
+    float end_to_base[4][4];                            /* 末端到基座的齐次变换，DH 正运动学连乘 */
+    float position_m[ARM_VECTOR_DIM];                   /* 末端在基座系下的位置 [x, y, z] */
+    float euler_deg[ARM_VECTOR_DIM];                    /* 末端姿态 [roll, pitch, yaw]，Z-Y-X 顺序，下标见 EULER_ROLL 等 */
+} ArmObserver_t;
 
 typedef struct {
     ArmConfig_t config;
     ArmState_t state;
+    ArmObserver_t observer;
+    uint16_t enable_divider;    /* 使能帧重发倒计时，0 表示本周期发 */
 } Arm_t;
 
 void Arm_Init(Arm_t *arm, const ArmConfig_t *config);
 void Arm_Run(Arm_t *arm);
-/* 每个电机发一帧各自控制模式下的零指令，不改电机的控制模式
- * 经 sendcommand 逐个发：J0、J2 在不同的 RM 电机组（不同发送帧），不会重复发同一帧 */
-void Arm_SendZeroCommand(Arm_t *arm);
+/* 状态由上层（遥控输入处理）经此修改，目标状态不属于本机角色时拒绝并返回 false */
+bool Arm_SetState(Arm_t *arm, ArmState_t state);
 
 #endif
