@@ -63,10 +63,13 @@ typedef struct {
 
 /*--------------------------------------参数层--------------------------------------*/
 /* DH 表为改进 DH，每个关节一行，第 i 行的 q 对应第 i 个关节，末端坐标系即 {J6}
- * zero_point 是各关节机械零位对应的电机原始编码器值，Arm_Init 写入电机，覆盖电机初始化时的默认值 */
+ * zero_point 是各关节机械零位对应的电机原始编码器值，Arm_Init 写入电机，覆盖电机初始化时的默认值
+ * direction 是关节 +q 方向相对编码器计数方向的符号：+1 表示正向转编码器增大，-1 表示减小
+ * 它与 Motor_t.inverse 是两件事：direction 只管观测角的正负，inverse 只管力矩指令的正负 */
 typedef struct {
     DH_Param_t dh[ARM_JOINT_COUNT];
     uint16_t zero_point[ARM_JOINT_COUNT];
+    int8_t direction[ARM_JOINT_COUNT];
 } ArmParam_t;
 
 typedef struct {
@@ -78,7 +81,7 @@ typedef struct {
 
 /*--------------------------------------观测--------------------------------------*/
 typedef struct {
-    float joint_deg[ARM_JOINT_COUNT];                   /* 关节角，方向已按 Motor_Direction 折算 */
+    float joint_deg[ARM_JOINT_COUNT];                   /* 关节角，方向已按 ArmParam_t.direction 折算 */
     float end_to_base[4][4];                            /* 末端到基座的齐次变换，DH 正运动学连乘 */
     float position_m[ARM_VECTOR_DIM];                   /* 末端在基座系下的位置 [x, y, z] */
     float euler_deg[ARM_VECTOR_DIM];                    /* 末端姿态 [roll, pitch, yaw]，Z-Y-X 顺序，下标见 EULER_ROLL 等 */

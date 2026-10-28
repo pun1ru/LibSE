@@ -8,6 +8,20 @@
 #include "queue.h"
 #include "semphr.h"
 
+/* 临时调试：ISR 用的 MSP 栈最低水位。启动文件里 Stack_Size 只有 1KB，
+ * 接收中断里还要开 64 字节缓冲并跑整条解析链，用它确认有没有用穿。
+ * 记录的是用到的最高地址的相反数——数值越小表示压得越深。 */
+extern volatile uint32_t g_isr_msp_min;
+#define CAN_ISR_STACK_SAMPLE()                                  \
+    do {                                                        \
+        uint32_t _sp = __get_MSP();                             \
+        if (_sp < g_isr_msp_min) { g_isr_msp_min = _sp; }        \
+    } while (0)
+
+/* 临时调试：逐 ID 接收统计的清除与查询（需 CAN_DEBUG_TRACE=1） */
+void CanDebug_ResetIds(void);
+uint32_t CanDebug_RxCount(uint16_t id);
+
 #define CAN_TX_QUEUE_LENGTH 16U
 #define CAN_STANDARD_ID_MAX 0x7FFU
 #define CAN_FRAME_DATA_MAX 8U
