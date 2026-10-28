@@ -7,6 +7,7 @@
 #include "CAN_driver.h"
 #include "Motor.h"
 #include "dh.h"
+#include "pid.h"
 
 /* 七轴臂模块，对象是 J0 ~ J6 七个关节电机，角度统一 deg，位置统一 m
  * 每个控制周期调用 Arm_Run，内部依次：观测 -> 控制 -> 通信
@@ -25,7 +26,7 @@ typedef enum {
 
 typedef enum {
     ARM_PROTECTED = 0,  /* 保护：每个电机发零指令，主从共有 */
-    ARM_ENABLE,         /* 使能：电机使能并发零指令，主从共有 */
+    ARM_ENABLE,         /* 使能：电机使能并跑关节角闭环，目标默认对齐当前关节角，主从共有 */
     ARM_FEEDBACK,       /* 主机：只读反馈，关节自由 */
     ARM_MASTER,         /* 主机：主机正常工作 */
     ARM_AUTO,           /* 从机：从机自主运行 */
@@ -62,6 +63,26 @@ typedef struct {
 } ArmStateInit_t;
 
 /*--------------------------------------参数层--------------------------------------*/
+/* 关节工作区间，观测角口径 deg，即 (-180, 180]，min 必须小于 max
+ * 区间必须连续且不跨 ±180（量程超过 360 或跨 ±180 时挪零点，别把它拆成两段）
+ * 只在非保护模式生效：目标进入区间内才允许，超出就截断到边界，保护模式不读它 */
+typedef struct {
+    float min_deg;
+    float max_deg;
+} ArmJointLimit_t;
+
+/* 关节角度环增益：误差 deg -> 力矩 N*m，D 项按每周期误差增量计算（周期并入 kd），
+ * d_alpha 为 D 项一阶低通系数 [0, 1)，0 即不滤波
+ * output_max 为力矩限幅，0 会让输出恒为 0，填增益时务必一起填 */
+typedef struct {
+    float kp;
+    float ki;
+    float kd;
+    float d_alpha;
+    float sum_error_max;
+    float output_max;
+} ArmJointGain_t;
+
 /* DH 表为改进 DH，每个关节一行，第 i 行的 q 对应第 i 个关节，末端坐标系即 {J6}
  * zero_point 是各关节机械零位对应的电机原始编码器值，Arm_Init 写入电机，覆盖电机初始化时的默认值
  * direction 是关节 +q 方向相对编码器计数方向的符号：+1 表示正向转编码器增大，-1 表示减小
@@ -70,6 +91,8 @@ typedef struct {
     DH_Param_t dh[ARM_JOINT_COUNT];
     uint16_t zero_point[ARM_JOINT_COUNT];
     int8_t direction[ARM_JOINT_COUNT];
+    ArmJointLimit_t limit[ARM_JOINT_COUNT];
+    ArmJointGain_t gain[ARM_JOINT_COUNT];
 } ArmParam_t;
 
 typedef struct {
@@ -87,11 +110,23 @@ typedef struct {
     float euler_deg[ARM_VECTOR_DIM];                    /* 末端姿态 [roll, pitch, yaw]，Z-Y-X 顺序，下标见 EULER_ROLL 等 */
 } ArmObserver_t;
 
+/*--------------------------------------控制层--------------------------------------*/
+/* 每关节一个角度环。误差直接用目标减观测，不做最短路径折叠：
+ * 限位区间连续且整段落在 (-180, 180] 内、不跨 ±180，直接相减就是区间内的那条路；
+ * 折叠会让跨度超过 180 的关节走 ±180 那侧的禁行区 */
+typedef struct {
+    PIDStruct pid;          /* 角度环 PID 状态 */
+    float target_deg;       /* 本周期目标角，已按工作区间截断 */
+    float output;           /* 角度环输出，力矩口径 N*m */
+} ArmJointCtrl_t;
+
 typedef struct {
     ArmConfig_t config;
     ArmState_t state;
     ArmObserver_t observer;
+    ArmJointCtrl_t joint_ctrl[ARM_JOINT_COUNT];
     uint16_t enable_divider;    /* 使能帧重发倒计时，0 表示本周期发 */
+    uint8_t ctrl_align_pending; /* 进入非保护态后第一次控制前，把目标对齐观测并清 PID */
 } Arm_t;
 
 void Arm_Init(Arm_t *arm, const ArmConfig_t *config);
