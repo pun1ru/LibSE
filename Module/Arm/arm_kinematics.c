@@ -29,11 +29,14 @@ void Arm_UpdateJointAngle(Arm_t *arm)
 {
     for (uint8_t i = 0U; i < ARM_JOINT_COUNT; ++i)
     {
-        const Motor_t *motor = arm->config.motor.joint[i];
+        Motor_t *motor = arm->config.motor.joint[i];
         /* 标定时没填（0）按 +1 处理，避免忘记配置时关节角恒为 0 */
         const int8_t sign = arm->config.param.direction[i];
+        const float direction = sign < 0 ? -1.0f : 1.0f;
 
-        arm->observer.joint_deg[i] = (sign < 0 ? -1.0f : 1.0f) * motor->feedback.abs_angle_deg;
+        Motor_UpdateFeedbackStatus(motor);
+        arm->observer.joint_abs_deg[i] = direction * motor->feedback.abs_angle_deg;
+        arm->observer.joint_deg[i] = direction * motor->feedback.multi_angle_deg;
     }
 }
 

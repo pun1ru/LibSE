@@ -48,6 +48,8 @@ void Arm_Init(Arm_t *arm, const ArmConfig_t *config)
 /*--------------------------------------状态机--------------------------------------*/
 bool Arm_SetState(Arm_t *arm, ArmState_t state)
 {
+    const ArmState_t previous_state = arm->state;
+
     if (!Arm_StateAllowed(arm, state))
     {
         return false;
@@ -60,6 +62,12 @@ bool Arm_SetState(Arm_t *arm, ArmState_t state)
         arm->enable_divider = 0U;
         /* 进使能态不能沿用上一个状态的目标和积分，下个周期先对齐观测 */
         arm->ctrl_align_pending = 1U;
+
+        /* 从任何非保护状态切入保护时发一次失能；没有失能实现的电机跳过 */
+        if (previous_state != ARM_PROTECTED && state == ARM_PROTECTED)
+        {
+            Arm_SendDisableCommand(arm);
+        }
     }
     return true;
 }
@@ -81,7 +89,7 @@ void Arm_Run(Arm_t *arm)
             arm->enable_divider = ARM_ENABLE_RESEND_DIV;
         }
         --arm->enable_divider;
-        /* 刚进使能态：目标按当前关节角截断到工作区间，避免带着上电前的目标跳变 */
+        /* 刚进使能态：目标对齐当前多圈角，避免带着上电前的目标跳变 */
         if (arm->ctrl_align_pending != 0U)
         {
             Arm_AlignJointTarget(arm);
@@ -92,6 +100,7 @@ void Arm_Run(Arm_t *arm)
     /* FEEDBACK / MASTER / AUTO / SERVANT 的关节控制还没实现，先和保护一样发零指令 */
     case ARM_PROTECTED:
     default:
+        Arm_TrackJointTarget(arm);
         Arm_SendZeroCommand(arm);
         break;
     }

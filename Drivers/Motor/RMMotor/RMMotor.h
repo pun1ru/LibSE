@@ -53,9 +53,6 @@ struct RMMotor {
     Motor_t base;
     RMMotorConfig_t motor_config;
     RMMotorGroup_t *group;
-    uint16_t last_encoder;
-    int32_t rounds;
-    uint8_t has_encoder;
 };
 
 /* C610/C620: 0x200 (ID 1-4), 0x1FF (ID 5-8).

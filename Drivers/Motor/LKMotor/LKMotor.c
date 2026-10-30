@@ -14,6 +14,7 @@
 #define LK_CMD_SPEED_CONTROL       0xA2U
 #define LK_CMD_POSITION_CONTROL    0xA3U
 #define LK_CMD_POSITION_LIMITED    0xA4U
+#define LK_ANGLE_LSB_PER_TURN      36000LL
 #define LK_DPS_TO_RPM              (60.0f / 360.0f)
 #define LK_ERROR_UNDERVOLTAGE      (1U << 0U)
 #define LK_ERROR_OVERVOLTAGE       (1U << 1U)
@@ -262,9 +263,10 @@ void LKMotor_Feedback(LKMotor_t *motor, const uint8_t data[8], uint16_t rec_id)
         feedback->omega_rads = speed_dps * MOTOR_DEG_TO_RAD;
         feedback->encoder = encoder;
         /* 16 位差值按有符号解释即落在 [-32768, 32767] */
-        Motor_SetAbsAngle(feedback,
-                          (float)(int16_t)(uint16_t)(encoder - motor->base.zero_point) *
-                          MOTOR_TWO_PI / (float)LK_ENCODER_COUNTS);
+        Motor_UpdateFeedbackAngle(
+            &motor->base,
+            (float)(int16_t)(uint16_t)(encoder - motor->base.zero_point) *
+            MOTOR_TWO_PI / (float)LK_ENCODER_COUNTS);
         feedback->temp = (float)(int8_t)data[1];
         if (feedback->status == MOTOR_NO_FEEDBACK)
         {
@@ -283,18 +285,35 @@ void LKMotor_Feedback(LKMotor_t *motor, const uint8_t data[8], uint16_t rec_id)
         {
             raw |= 0xFF00000000000000ULL;
         }
-        feedback->multi_angle_rad = (float)(int64_t)raw *
-                                    LK_ANGLE_DEGREE_PER_LSB * MOTOR_DEG_TO_RAD;
+        int64_t single_turn_raw = (int64_t)raw % LK_ANGLE_LSB_PER_TURN;
+        if (single_turn_raw < 0)
+        {
+            single_turn_raw += LK_ANGLE_LSB_PER_TURN;
+        }
+        float angle_rad = (float)single_turn_raw * LK_ANGLE_DEGREE_PER_LSB *
+                          MOTOR_DEG_TO_RAD;
+        float zero_angle_rad = (float)motor->base.zero_point * MOTOR_TWO_PI /
+                               (float)LK_ENCODER_COUNTS;
+        Motor_UpdateFeedbackAngle(&motor->base, angle_rad - zero_angle_rad);
+        if (feedback->status == MOTOR_NO_FEEDBACK)
+        {
+            feedback->status = MOTOR_ENABLED;
+        }
         break;
     }
     case LK_CMD_READ_SINGLE_ANGLE:
     {
         uint32_t angle = (uint32_t)data[4] | ((uint32_t)data[5] << 8) |
                          ((uint32_t)data[6] << 16) | ((uint32_t)data[7] << 24);
-        Motor_SetAbsAngle(feedback,
-                          (float)angle * LK_ANGLE_DEGREE_PER_LSB * MOTOR_DEG_TO_RAD -
-                          (float)motor->base.zero_point * MOTOR_TWO_PI /
-                          (float)LK_ENCODER_COUNTS);
+        Motor_UpdateFeedbackAngle(
+            &motor->base,
+            (float)angle * LK_ANGLE_DEGREE_PER_LSB * MOTOR_DEG_TO_RAD -
+            (float)motor->base.zero_point * MOTOR_TWO_PI /
+            (float)LK_ENCODER_COUNTS);
+        if (feedback->status == MOTOR_NO_FEEDBACK)
+        {
+            feedback->status = MOTOR_ENABLED;
+        }
         break;
     }
     default:

@@ -5,38 +5,58 @@
 
 #include "algorism.h"
 
+static void Arm_UpdateMultiTurnLimit(const Arm_t *arm, uint8_t joint,
+                                     ArmJointCtrl_t *ctrl)
+{
+    const ArmJointLimit_t *limit = &arm->config.param.limit[joint];
+    const float current_abs_deg = arm->observer.joint_abs_deg[joint];
+    const float current_multi_deg = arm->observer.joint_deg[joint];
+
+    ctrl->limit_min_deg = current_multi_deg + (limit->min_deg - current_abs_deg);
+    ctrl->limit_max_deg = current_multi_deg + (limit->max_deg - current_abs_deg);
+}
+
 /*--------------------------------------控制--------------------------------------*/
-/* 进使能态的第一次控制前调用：目标取当前关节角并截断到工作区间，PID 清零
- * 这样上电或保护恢复时不带旧目标，也不会因为积分残留突然出力 */
+/* 进使能态的第一次控制前调用：锁存当前圈的多圈限位，再把目标对齐当前多圈关节角，PID 清零
+ * 本次使能期间一直使用这组限位，跨圈后也不会重新映射到另一圈
+ * 观测角在限位内时目标就等于观测角；不在限位内时截到最近边界 */
 void Arm_AlignJointTarget(Arm_t *arm)
 {
     for (uint8_t i = 0U; i < ARM_JOINT_COUNT; ++i)
     {
         ArmJointCtrl_t *ctrl = &arm->joint_ctrl[i];
-        const ArmJointLimit_t *limit = &arm->config.param.limit[i];
 
+        Arm_UpdateMultiTurnLimit(arm, i, ctrl);
         ctrl->target_deg = DoubleEdgeLimiter(arm->observer.joint_deg[i],
-                                             limit->min_deg, limit->max_deg);
+                                             ctrl->limit_min_deg,
+                                             ctrl->limit_max_deg);
         ctrl->output = 0.0f;
         PIDReset(&ctrl->pid);
     }
 }
 
-/* 关节角度环：目标减观测，误差直接进 PID，输出即关节力矩
- * 不按最短路径折叠：限位区间连续且不跨 ±180，直接相减得到的正是限位内的那条路
- * 一旦折叠，跨度超过 180 的关节会走 ±180 那侧的禁行区（例如 [-150, 150] 里 -150 -> +150
- * 该走 +300，折叠成 -60 就顶在机械限位上死出力） */
+void Arm_TrackJointTarget(Arm_t *arm)
+{
+    for (uint8_t i = 0U; i < ARM_JOINT_COUNT; ++i)
+    {
+        arm->joint_ctrl[i].target_deg = arm->observer.joint_deg[i];
+    }
+}
+
+/* 关节角度环：目标持续跟踪当前多圈观测，仅在离开进使能时锁存的限位区间时截断到边界
+ * 限位不在运行中重算，避免实际角跨圈后整个允许区间跟着跳到下一圈 */
 void Arm_JointControl(Arm_t *arm)
 {
     for (uint8_t i = 0U; i < ARM_JOINT_COUNT; ++i)
     {
         ArmJointCtrl_t *ctrl = &arm->joint_ctrl[i];
-        const ArmJointLimit_t *limit = &arm->config.param.limit[i];
+        const float observed_deg = arm->observer.joint_deg[i];
 
-        /* 目标也可能由上层改动，每周期都按工作区间截断一次再进环 */
-        ctrl->target_deg = DoubleEdgeLimiter(ctrl->target_deg, limit->min_deg, limit->max_deg);
+        ctrl->target_deg = DoubleEdgeLimiter(observed_deg,
+                                             ctrl->limit_min_deg,
+                                             ctrl->limit_max_deg);
         ctrl->output = PIDUpdate(&ctrl->pid,
-                                 ctrl->target_deg - arm->observer.joint_deg[i]);
+                                 ctrl->target_deg - observed_deg);
     }
     Arm_SendJointCommand(arm);
 }
@@ -112,6 +132,19 @@ void Arm_SendEnableCommand(Arm_t *arm)
         if (motor->motorops.enable != NULL)
         {
             motor->motorops.enable(motor);
+        }
+    }
+}
+
+void Arm_SendDisableCommand(Arm_t *arm)
+{
+    for (uint8_t i = 0U; i < ARM_JOINT_COUNT; ++i)
+    {
+        Motor_t *motor = arm->config.motor.joint[i];
+
+        if (motor != NULL && motor->motorops.disable != NULL)
+        {
+            motor->motorops.disable(motor);
         }
     }
 }

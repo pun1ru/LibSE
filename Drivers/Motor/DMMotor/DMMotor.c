@@ -81,8 +81,7 @@ void DMMotor_Feedback(DMMotor_t *motor, const uint8_t data[8],uint16_t rec_id)
                                         limits->p_max, 16U) -
                          DMMotor_Decode(motor->base.zero_point, limits->p_min,
                                         limits->p_max, 16U);
-    feedback->multi_angle_rad = position_rad;
-    Motor_SetAbsAngle(feedback, position_rad);
+    Motor_UpdateFeedbackAngle(&motor->base, position_rad);
     feedback->omega_rads = DMMotor_Decode(velocity_raw, limits->v_min,
                                           limits->v_max, 12U);
     feedback->velocity_rpm = feedback->omega_rads * MOTOR_RADS_TO_RPM;

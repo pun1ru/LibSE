@@ -45,6 +45,7 @@ typedef struct {
 #define MOTOR_DEG_TO_RAD      (MOTOR_PI / 180.0f)
 #define MOTOR_RADS_TO_RPM     (60.0f / MOTOR_TWO_PI)
 #define MOTOR_RPM_TO_RADS     (MOTOR_TWO_PI / 60.0f)
+#define MOTOR_FEEDBACK_TIMEOUT_MS  100U
 
 typedef struct {
     uint32_t timestamp;                  ///< Feedback function call count
@@ -54,6 +55,7 @@ typedef struct {
     float abs_angle_rad;  ///< 相对零点的单圈角度 (-pi, pi] rad
     float abs_angle_deg;  ///< 相对零点的单圈角度 (-180, 180] deg
     float multi_angle_rad; ///< 多圈角度 Multi-turn angle, rad
+    float multi_angle_deg; ///< 多圈角度 Multi-turn angle, deg
     float velocity_rpm;                  ///< 转速 Speed, rpm
     float omega_rads;                    ///< 角速度 Angular velocity, rad/s
     float torque_nm;                     ///< 扭矩 Torque, N*m
@@ -83,6 +85,10 @@ struct Motor_t{
     bool inverse;                       // 反转电流或力矩命令方向；反馈保持原始方向，由使用方（云台）按此标志折算
     float gear_ratio;                   // 减速比 = 转子转速 / 输出轴转速，无减速箱为 1，由各电机驱动填写
     float torque_constant;              // 电流到力矩的系数 N*m/A，口径见各驱动，0 表示该驱动不提供
+    int32_t multi_turn_count;           // 软件累计圈数
+    float last_abs_angle_rad;           // 上一次零点化单圈角，用于跨圈判断
+    uint32_t last_feedback_ms;          // 最近一次有效角度反馈时间
+    uint8_t feedback_angle_valid;       // 是否已有可用于跨圈判断的角度
 };
 
 /* inverse 对应的方向系数 ±1，使用方用它把反馈折算到与指令同向 */
@@ -99,7 +105,10 @@ void Motor_BaseInit(Motor_t *motor, FDCAN_HandleTypeDef *can,
  * 在 Init 之后、CAN 启动之前调用；绑定表满返回 false */
 bool Motor_BindCan(Motor_t *motor, CanInstance_t *can);
 
-/* 由相对零点的单圈角度同时填写 abs_angle_rad 与 abs_angle_deg，折算到 [-pi, pi] */
-void Motor_SetAbsAngle(Feedback_t *feedback, float angle_rad);
+/* 填写零点化单圈角，并按相邻帧跨 +/-pi 的情况更新软件多圈角 */
+void Motor_UpdateFeedbackAngle(Motor_t *motor, float angle_rad);
+
+/* 周期调用；反馈超时后清圈并以 MOTOR_NO_FEEDBACK 标记，下一帧从零圈重新建立 */
+void Motor_UpdateFeedbackStatus(Motor_t *motor);
 
 #endif

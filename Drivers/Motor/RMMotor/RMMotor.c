@@ -4,7 +4,6 @@
 #include <string.h>
 
 #define RM_ENCODER_COUNTS 8192
-#define RM_HALF_ENCODER_COUNTS (RM_ENCODER_COUNTS / 2)
 
 static uint8_t RMMotor_Slot(uint8_t motor_id)
 {
@@ -122,21 +121,6 @@ void RMMotor_Feedback(RMMotor_t *motor, const uint8_t data[8], uint16_t rec_id)
         return;
     }
 
-    if (motor->has_encoder != 0U)
-    {
-        int32_t delta = (int32_t)encoder - (int32_t)motor->last_encoder;
-        if (delta > RM_HALF_ENCODER_COUNTS)
-        {
-            motor->rounds--;
-        }
-        else if (delta < -RM_HALF_ENCODER_COUNTS)
-        {
-            motor->rounds++;
-        }
-    }
-    motor->last_encoder = encoder;
-    motor->has_encoder = 1U;
-
     int16_t speed_rpm = (int16_t)(((uint16_t)data[2] << 8) | data[3]);
     int16_t current_raw = (int16_t)(((uint16_t)data[4] << 8) | data[5]);
     int32_t zeroed_encoder = (int32_t)encoder -
@@ -148,10 +132,9 @@ void RMMotor_Feedback(RMMotor_t *motor, const uint8_t data[8], uint16_t rec_id)
     Feedback_t *feedback = &motor->base.feedback;
     feedback->timestamp++;
     feedback->encoder = encoder;
-    Motor_SetAbsAngle(feedback, (float)zeroed_encoder * MOTOR_TWO_PI /
-                                RM_ENCODER_COUNTS);
-    feedback->multi_angle_rad = ((float)motor->rounds +
-                                 (float)encoder / RM_ENCODER_COUNTS) * MOTOR_TWO_PI;
+    Motor_UpdateFeedbackAngle(&motor->base,
+                              (float)zeroed_encoder * MOTOR_TWO_PI /
+                              RM_ENCODER_COUNTS);
     /* 反馈的是转子转速（减速箱前） */
     feedback->velocity_rpm = (float)speed_rpm;
     feedback->omega_rads = (float)speed_rpm * MOTOR_RPM_TO_RADS;

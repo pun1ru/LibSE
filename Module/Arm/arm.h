@@ -63,9 +63,10 @@ typedef struct {
 } ArmStateInit_t;
 
 /*--------------------------------------参数层--------------------------------------*/
-/* 关节工作区间，观测角口径 deg，即 (-180, 180]，min 必须小于 max
+/* 关节工作区间，单圈绝对角口径 deg，即 (-180, 180]，min 必须小于 max
  * 区间必须连续且不跨 ±180（量程超过 360 或跨 ±180 时挪零点，别把它拆成两段）
- * 只在非保护模式生效：目标进入区间内才允许，超出就截断到边界，保护模式不读它 */
+ * 多圈控制时映射到当前圈：limit_multi = current_multi + (limit_abs - current_abs)
+ * 差值不做环绕，保证限位和当前实际角在同一圈 */
 typedef struct {
     float min_deg;
     float max_deg;
@@ -104,7 +105,8 @@ typedef struct {
 
 /*--------------------------------------观测--------------------------------------*/
 typedef struct {
-    float joint_deg[ARM_JOINT_COUNT];                   /* 关节角，方向已按 ArmParam_t.direction 折算 */
+    float joint_deg[ARM_JOINT_COUNT];                   /* 多圈关节角，方向已按 ArmParam_t.direction 折算 */
+    float joint_abs_deg[ARM_JOINT_COUNT];               /* 单圈绝对角，用于把绝对限位映射到当前圈 */
     float end_to_base[4][4];                            /* 末端到基座的齐次变换，DH 正运动学连乘 */
     float position_m[ARM_VECTOR_DIM];                   /* 末端在基座系下的位置 [x, y, z] */
     float euler_deg[ARM_VECTOR_DIM];                    /* 末端姿态 [roll, pitch, yaw]，Z-Y-X 顺序，下标见 EULER_ROLL 等 */
@@ -116,7 +118,9 @@ typedef struct {
  * 折叠会让跨度超过 180 的关节走 ±180 那侧的禁行区 */
 typedef struct {
     PIDStruct pid;          /* 角度环 PID 状态 */
-    float target_deg;       /* 本周期目标角，已按工作区间截断 */
+    float target_deg;       /* 多圈目标角，使能时持续跟踪观测并限制在入场锁存区间 */
+    float limit_min_deg;    /* 进使能时锁存的多圈下限 */
+    float limit_max_deg;    /* 进使能时锁存的多圈上限 */
     float output;           /* 角度环输出，力矩口径 N*m */
 } ArmJointCtrl_t;
 
