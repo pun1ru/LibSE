@@ -5,42 +5,86 @@
 #include <stdint.h>
 
 #include "FreeRTOS.h"
+#include "task.h"
 #include "arm.h"
 #include "uart_driver.h"
 
-/* 上位机通信模块：把七轴臂的观测与状态按串口协议（Host/docs/02_protocol.md）打成 JOINT_STATE 帧，经一个 UART 发给上位机
- * 目前只做发送：帧格式、字段偏移、CRC 与上位机 Host/armhost/protocol 逐字节一致，改动要同步两边
- * 发送回调由 UART 发送任务按周期调用，直接读传入的 Arm_t（不走队列，只读不写）；Arm 任务正在写时可能读到相邻两周期混合的一帧，上报用途可接受
- * 上一帧还在发（HAL_BUSY）就丢掉这一帧，下个上报周期带新数据再发，序号照常递增，上位机能据此统计丢帧
- * status_flags 里的遥控在线位模块不填（0），需要时由 System 层在拿到帧之前自行扩展
+/* Host protocol bridge: periodic JOINT_STATE reports plus commands from the PC.
+ * UART RX runs in interrupt context and only validates/queues frames. Command
+ * execution, Arm writes and all responses run from Host_Transmit in task context.
  */
 #define HOST_FRAME_SOF0             0xA5U
 #define HOST_FRAME_SOF1             0x5AU
-#define HOST_FRAME_VERSION          0x10U   /* 高 4 位 major，低 4 位 minor */
-#define HOST_FRAME_HEADER_SIZE      9U      /* 含帧头 CRC-8 */
-#define HOST_FRAME_TRAILER_SIZE     2U      /* CRC-16 */
+#define HOST_FRAME_VERSION          0x10U
+#define HOST_FRAME_HEADER_SIZE      9U
+#define HOST_FRAME_TRAILER_SIZE     2U
 #define HOST_FRAME_OVERHEAD         (HOST_FRAME_HEADER_SIZE + HOST_FRAME_TRAILER_SIZE)
-#define HOST_FRAME_MAX_SIZE         UART_TX_BUFFER_SIZE     /* 受 UART 发送缓冲限制，协议规定最大 256 */
-#define HOST_MSG_JOINT_STATE        0x10U
+#define HOST_FRAME_MAX_SIZE         UART_TX_BUFFER_SIZE
+#define HOST_FRAME_MAX_PAYLOAD      (HOST_FRAME_MAX_SIZE - HOST_FRAME_OVERHEAD)
 
-#define HOST_JOINT_RECORD_SIZE      28U     /* 每个关节一条记录，v1.0 */
+#define HOST_MSG_HEARTBEAT          0x01U
+#define HOST_MSG_DEVICE_INFO_REQ    0x02U
+#define HOST_MSG_DEVICE_INFO        0x03U
+#define HOST_MSG_ACK                0x04U
+#define HOST_MSG_JOINT_STATE        0x10U
+#define HOST_MSG_SET_HOST_TARGET    0x23U
+#define HOST_MSG_PARAM_READ         0x28U
+#define HOST_MSG_PARAM_VALUE        0x2AU
+
+#define HOST_JOINT_RECORD_SIZE      28U
 #define HOST_JOINT_STATE_HEAD_SIZE  12U
 #define HOST_JOINT_STATE_SIZE       (HOST_JOINT_STATE_HEAD_SIZE + ARM_JOINT_COUNT * HOST_JOINT_RECORD_SIZE)
 #define HOST_JOINT_STATE_FRAME_SIZE (HOST_FRAME_OVERHEAD + HOST_JOINT_STATE_SIZE)
 
+#define HOST_ACK_SIZE               8U
+#define HOST_PARAM_VALUE_SIZE       12U
+#define HOST_DEVICE_INFO_SIZE       28U
+#define HOST_SET_HOST_TARGET_SIZE   8U
+#define HOST_TARGET_ACTION_SET_OPEN    0U  /* 保存目标，该关节不闭环 */
+#define HOST_TARGET_ACTION_SET_CLOSED  1U  /* 保存目标，该关节投入闭环 */
+#define HOST_TARGET_ACTION_STOP_ALL    2U  /* 全部关节退出闭环，目标保留 */
+
+#define HOST_PARAM_STATE_RATE_HZ    0x0001U
+#define HOST_PARAM_STATUS_RATE_HZ   0x0002U
+#define HOST_PARAM_LINK_TIMEOUT     0x0003U
+#define HOST_PARAM_TORQUE_HOLD_MAX  0x0004U
+#define HOST_PARAM_ZERO_POINT       0x0100U
+#define HOST_PARAM_DIRECTION        0x0101U
+#define HOST_PARAM_LIMIT_MIN        0x0102U
+#define HOST_PARAM_LIMIT_MAX        0x0103U
+#define HOST_PARAM_GAIN_KP          0x0200U
+#define HOST_PARAM_GAIN_KI          0x0201U
+#define HOST_PARAM_GAIN_KD          0x0202U
+#define HOST_PARAM_GAIN_D_ALPHA     0x0203U
+#define HOST_PARAM_GAIN_SUM_MAX     0x0204U
+#define HOST_PARAM_GAIN_OUTPUT_MAX  0x0205U
+#define HOST_PARAM_HOST_TORQUE_LIMIT 0x0300U
+#define HOST_PARAM_DH               0x0400U
+
 /* status_flags */
+#define HOST_FLAG_RC_ONLINE         0x0001U
+#define HOST_FLAG_HOST_LINK_OK      0x0002U
 #define HOST_FLAG_CTRL_ALIGNING     0x0010U
+#define HOST_FLAG_HOST_CLOSED_LOOP  0x0020U
 /* joint_flags */
 #define HOST_JOINT_FLAG_ONLINE      0x01U
+#define HOST_JOINT_FLAG_HOST_TARGET_VALID 0x10U
+#define HOST_JOINT_FLAG_HOST_CLOSED_LOOP  0x20U
 
-/*--------------------------------------外设层--------------------------------------*/
+#define HOST_LINK_TIMEOUT_MS        300U
+#define HOST_CMD_AGE_NONE           0xFFFFU
+#define HOST_RX_BUFFER_SIZE         HOST_FRAME_MAX_SIZE
+#define HOST_MAX_REQUEST_PAYLOAD    32U
+#define HOST_RX_QUEUE_SIZE          16U
+#define HOST_TX_QUEUE_SIZE          8U
+#define HOST_REPLY_CACHE_SIZE       8U
+
 typedef struct {
-    UartInstance_t *uart;       /* 连上位机的串口，发送口绑在这个实例上 */
+    UartInstance_t *uart;
 } HostPeriph_t;
 
-/*--------------------------------------参数层--------------------------------------*/
 typedef struct {
-    uint16_t state_divider;     /* 每调用多少次发送回调上报一帧，发送任务周期 2 ms 时取 5 即 100 Hz，取 0 按 1 处理 */
+    uint16_t state_divider;
 } HostParam_t;
 
 typedef struct {
@@ -49,24 +93,58 @@ typedef struct {
 } HostConfig_t;
 
 typedef struct {
+    uint16_t seq;
+    uint8_t type;
+    uint8_t flags;
+    uint8_t length;
+    uint8_t overflow;
+    uint8_t payload[HOST_MAX_REQUEST_PAYLOAD];
+} HostRequest_t;
+
+typedef struct {
+    uint8_t type;
+    uint8_t length;
+    uint8_t payload[HOST_DEVICE_INFO_SIZE];
+} HostResponse_t;
+
+typedef struct {
+    uint16_t seq;
+    uint8_t type;
+    uint8_t length;
+    uint8_t payload[HOST_DEVICE_INFO_SIZE];
+} HostReplyCache_t;
+
+typedef struct {
     HostConfig_t config;
-    const Arm_t *arm;           /* 只读，由 Host_Init 传入 */
+    Arm_t *arm;
     uint16_t divider_count;
-    uint16_t sequence;          /* 发送方每帧 +1，回绕 */
-    uint32_t drop_count;        /* 因 DMA 忙丢掉的上报帧 */
+    uint16_t sequence;
+    uint32_t drop_count;
+    uint32_t rx_drop_count;
+    uint32_t tx_drop_count;
+    uint32_t last_rx_ms;
+    uint32_t last_cmd_ms;
+    uint8_t ever_rx;
+    uint8_t ever_cmd;
+    uint8_t rx_buffer[HOST_RX_BUFFER_SIZE];
+    uint16_t rx_length;
+    volatile uint16_t rx_head;
+    volatile uint16_t rx_tail;
+    uint16_t tx_head;
+    uint16_t tx_tail;
+    uint16_t cache_head;
+    uint8_t cache_count;
+    HostRequest_t requests[HOST_RX_QUEUE_SIZE];
+    HostResponse_t responses[HOST_TX_QUEUE_SIZE];
+    HostReplyCache_t replies[HOST_REPLY_CACHE_SIZE];
+    uint8_t joint_payload[HOST_JOINT_STATE_SIZE];
     uint8_t frame[HOST_FRAME_MAX_SIZE];
 } Host_t;
 
-void Host_Init(Host_t *host, const HostConfig_t *config, const Arm_t *arm);
-
-/* 把上位机挂到配置里那个串口的发送口上，之后发送任务每个周期经 UART_DispatchTx 调 Host_Transmit
- * 在 Host_Init 之后调用，用法同 Debug_BindUart */
+void Host_Init(Host_t *host, const HostConfig_t *config, Arm_t *arm);
 BaseType_t Host_BindUart(Host_t *host);
-
-/* 发送任务调用：到上报周期就拼一帧 JOINT_STATE 发出，没到周期直接返回；上一帧没发完就丢掉这一帧 */
 void Host_Transmit(Host_t *host, UartInstance_t *uart);
 
-/* 校验算法放出来给单元测试和以后的接收解析复用：CRC-8/SMBUS 与 CRC-16/CCITT-FALSE */
 uint8_t Host_Crc8(const uint8_t *data, uint16_t length);
 uint16_t Host_Crc16(const uint8_t *data, uint16_t length);
 

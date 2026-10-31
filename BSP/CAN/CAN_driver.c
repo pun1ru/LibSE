@@ -360,6 +360,11 @@ static HAL_StatusTypeDef CAN_Recover(CanInstance_t *instance)
 {
     FDCAN_HandleTypeDef *hcan = instance->can;
 
+    /* Recovery re-runs HAL_FDCAN_Init(); keep automatic retransmission on,
+     * otherwise CCCR.DAR is restored and LK feedback frames with smaller IDs
+     * can silently starve commands on the same bus. */
+    hcan->Init.AutoRetransmission = ENABLE;
+
     if (hcan->State == HAL_FDCAN_STATE_BUSY)
     {
         (void)HAL_FDCAN_AbortTxRequest(hcan, CAN_TX_REQUEST_ALL);

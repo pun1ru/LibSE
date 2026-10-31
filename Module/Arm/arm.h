@@ -6,6 +6,7 @@
 
 #include "CAN_driver.h"
 #include "Motor.h"
+#include "arm_dynamics.h"
 #include "dh.h"
 #include "pid.h"
 
@@ -13,10 +14,18 @@
  * 每个控制周期调用 Arm_Run，内部依次：观测 -> 控制 -> 通信
  * 电机在 App 层的 motor_init 里创建，反馈帧在 Arm_Init 里绑到各自的 CAN 实例
  * 模块只定义类型和算法，DH 表、零点、角色这些具体值全部由 System 层的 module_init 在配置里给出
- * 主从角色在初始化前由配置定下，之后不再修改：主机状态 PROTECTED/ENABLE/FEEDBACK/MASTER，从机状态 PROTECTED/ENABLE/AUTO/SERVANT
+ * 主从角色在初始化前由配置定下，之后不再修改：主机状态 PROTECTED/ENABLE/FEEDBACK/MASTER/HOST，从机状态 PROTECTED/ENABLE/AUTO/SERVANT/HOST
  */
 #define ARM_JOINT_COUNT   7U
 #define ARM_VECTOR_DIM    3U    /* 位置、欧拉角的分量数 */
+
+/* 重力前馈是否叠加到力矩输出的编译开关：
+ *   0（默认）只计算重力矩并存在 arm->gravity 里供观察，输出路径与没有这个功能时逐字节一致
+ *   1 才会在 Arm_JointControl 里把 gravity.torque_cmd 加到控制输出上
+ * 实机采集重力辨识数据时必须保持 0 或把 gravity.enable 置 0，否则采到的力矩里已经含了前馈 */
+#ifndef ARM_GRAVITY_OUTPUT
+#define ARM_GRAVITY_OUTPUT  1
+#endif
 
 /*--------------------------------------状态机--------------------------------------*/
 typedef enum {
@@ -30,8 +39,15 @@ typedef enum {
     ARM_FEEDBACK,       /* 主机：只读反馈，关节自由 */
     ARM_MASTER,         /* 主机：主机正常工作 */
     ARM_AUTO,           /* 从机：从机自主运行 */
-    ARM_SERVANT         /* 从机：跟随主机 */
+    ARM_SERVANT,        /* 从机：跟随主机 */
+    ARM_HOST            /* 主从共有：上位机设定角度目标，是否闭环由上位机决定 */
 } ArmState_t;
+
+typedef enum {
+    ARM_HOST_TARGET_OK = 0,
+    ARM_HOST_TARGET_WRONG_STATE,
+    ARM_HOST_TARGET_BAD_TARGET
+} ArmHostTargetResult_t;
 
 typedef enum {
     ARM_J0 = 0,
@@ -74,7 +90,8 @@ typedef struct {
 
 /* 关节角度环增益：误差 deg -> 力矩 N*m，D 项按每周期误差增量计算（周期并入 kd），
  * d_alpha 为 D 项一阶低通系数 [0, 1)，0 即不滤波
- * output_max 为力矩限幅，0 会让输出恒为 0，填增益时务必一起填 */
+ * output_max 只限制 PID 自身输出；total_output_max 限制 PID + 重力前馈的最终总和
+ * 两者都应填正数，未填或非正时对应部分输出为 0 */
 typedef struct {
     float kp;
     float ki;
@@ -82,6 +99,7 @@ typedef struct {
     float d_alpha;
     float sum_error_max;
     float output_max;
+    float total_output_max;
 } ArmJointGain_t;
 
 /* DH 表为改进 DH，每个关节一行，第 i 行的 q 对应第 i 个关节，末端坐标系即 {J6}
@@ -94,6 +112,7 @@ typedef struct {
     int8_t direction[ARM_JOINT_COUNT];
     ArmJointLimit_t limit[ARM_JOINT_COUNT];
     ArmJointGain_t gain[ARM_JOINT_COUNT];
+    ArmGravityParam_t gravity;      /* 重力补偿：开关、符号、g、参数表指针，见 arm_dynamics.h */
 } ArmParam_t;
 
 typedef struct {
@@ -124,18 +143,53 @@ typedef struct {
     float output;           /* 角度环输出，力矩口径 N*m */
 } ArmJointCtrl_t;
 
+/* 重力补偿运行状态，每个 Arm_Run 在正运动学之后刷新
+ * model_valid 为 0 时（未使能 / 无参数表 / 关节角含 NaN）torque_model 与 torque_cmd 一律为 0 */
+typedef struct {
+    float torque_model[ARM_JOINT_COUNT];    /* 模型原始输出 dU/dq，N*m，不带符号、不限幅，供观察和对拍 */
+    float torque_cmd[ARM_JOINT_COUNT];      /* sign 之后的重力前馈，不做单轴预限幅；与 PID 相加后统一受 total_output_max 限制 */
+    uint8_t model_valid;
+    uint8_t output_active;                  /* 本周期是否真的把 torque_cmd 加进了输出，0 = 只计算没输出 */
+} ArmGravityState_t;
+
 typedef struct {
     ArmConfig_t config;
     ArmState_t state;
     ArmObserver_t observer;
     ArmJointCtrl_t joint_ctrl[ARM_JOINT_COUNT];
+    ArmGravityState_t gravity;
     uint16_t enable_divider;    /* 使能帧重发倒计时，0 表示本周期发 */
     uint8_t ctrl_align_pending; /* 进入非保护态后第一次控制前，把目标对齐观测并清 PID */
+    uint8_t host_align_pending; /* 进入 HOST 后第一次控制前，锁存限位并把目标对齐观测 */
+    uint8_t host_closed_loop_mask;  /* bit i=1：关节 i 追 HOST 目标；0 位输出零力矩 */
+    uint8_t host_target_valid_mask; /* bit i=1：关节 i 至少收到过一次 HOST 目标 */
+    uint8_t rc_online;          /* RC frame is fresh; reported to the host status frame */
+    float host_target_abs_deg[ARM_JOINT_COUNT]; /* 上位机给出的单圈绝对目标，用于状态显示/复查 */
 } Arm_t;
 
 void Arm_Init(Arm_t *arm, const ArmConfig_t *config);
 void Arm_Run(Arm_t *arm);
 /* 状态由上层（遥控输入处理）经此修改，目标状态不属于本机角色时拒绝并返回 false */
 bool Arm_SetState(Arm_t *arm, ArmState_t state);
+/* Cache the receiver freshness for protocol status reporting. */
+void Arm_SetRcOnline(Arm_t *arm, bool online);
+
+/* HOST 单关节目标：joint 为 0..ARM_JOINT_COUNT-1，target_abs_deg 为单圈绝对角，
+ * 必须落在该关节 config.param.limit 内。只更新指定关节，其他关节保持不变。
+ * closed_loop=false 时保存目标，该关节不跑 PID（只剩重力前馈；前馈关闭时输出零力矩）；只有 HOST 状态接受 */
+ArmHostTargetResult_t Arm_SetHostTarget(Arm_t *arm, uint8_t joint, float target_abs_deg,
+                                        bool closed_loop);
+/* HOST 链路失效或退出目标控制：关闭全部闭环、清 PID 与上一周期输出
+ * 注意：状态仍是 ARM_HOST，下个 Arm_Run 起重力前馈照常叠加（遵从 ENABLE 的逻辑），
+ * 所以这不再等于“零力矩”：重力前馈打开时关节会被前馈托住；要真正泄力需切 ARM_PROTECTED 或关掉重力前馈 */
+void Arm_StopHostControl(Arm_t *arm);
+
+/* 重力补偿，Arm_Run 在正运动学之后每周期调用，其他地方一般不用直接调
+ * 计算原始重力矩（gravity.torque_model），再乘 param.gravity.sign 得到独立的重力指令 torque_cmd；
+ * 与 PID 相加后由 Arm_JointControl 按各关节 gain.total_output_max 统一限幅
+ * 参数表为空 / 未使能 / 关节角非有限值时全部清零，不会残留上一周期的值 */
+void Arm_GravityUpdate(Arm_t *arm);
+/* 把 torque_cmd 清零，退出控制或关闭补偿时用 */
+void Arm_GravityClear(Arm_t *arm);
 
 #endif
