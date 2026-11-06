@@ -91,10 +91,10 @@ void Arm_SetRcOnline(Arm_t *arm, bool online)
     }
 }
 
-ArmHostTargetResult_t Arm_SetHostTarget(Arm_t *arm, uint8_t joint, float target_abs_deg,
-                                        bool closed_loop)
+ArmHostTargetResult_t Arm_SetHostTarget(Arm_t *arm, uint8_t joint, float target_deg,
+                                        bool closed_loop, bool multi_turn)
 {
-    const ArmJointLimit_t *limit;
+    ArmJointCtrl_t *ctrl;
     uint8_t bit;
     bool was_closed_loop;
 
@@ -107,8 +107,7 @@ ArmHostTargetResult_t Arm_SetHostTarget(Arm_t *arm, uint8_t joint, float target_
         return ARM_HOST_TARGET_WRONG_STATE;
     }
 
-    limit = &arm->config.param.limit[joint];
-    if (!(target_abs_deg >= limit->min_deg && target_abs_deg <= limit->max_deg))
+    if (!((target_deg - target_deg) == 0.0f))
     {
         return ARM_HOST_TARGET_BAD_TARGET;
     }
@@ -123,11 +122,38 @@ ArmHostTargetResult_t Arm_SetHostTarget(Arm_t *arm, uint8_t joint, float target_
         arm->ctrl_align_pending = 0U;
     }
 
+    ctrl = &arm->joint_ctrl[joint];
+    if (multi_turn)
+    {
+        if (!(target_deg >= ctrl->limit_min_deg && target_deg <= ctrl->limit_max_deg))
+        {
+            return ARM_HOST_TARGET_BAD_TARGET;
+        }
+        ctrl->target_deg = target_deg;
+    }
+    else
+    {
+        const ArmJointLimit_t *limit = &arm->config.param.limit[joint];
+
+        if (!(target_deg >= limit->min_deg && target_deg <= limit->max_deg))
+        {
+            return ARM_HOST_TARGET_BAD_TARGET;
+        }
+        const float delta_deg = target_deg - arm->observer.joint_abs_deg[joint];
+        ctrl->target_deg = arm->observer.joint_deg[joint] + delta_deg;
+        if (ctrl->target_deg < ctrl->limit_min_deg)
+        {
+            ctrl->target_deg = ctrl->limit_min_deg;
+        }
+        else if (ctrl->target_deg > ctrl->limit_max_deg)
+        {
+            ctrl->target_deg = ctrl->limit_max_deg;
+        }
+    }
+
     bit = (uint8_t)(1U << joint);
     was_closed_loop = (arm->host_closed_loop_mask & bit) != 0U;
-    arm->host_target_abs_deg[joint] = target_abs_deg;
-    arm->joint_ctrl[joint].target_deg = arm->observer.joint_deg[joint] +
-                                        (target_abs_deg - arm->observer.joint_abs_deg[joint]);
+    arm->host_target_deg[joint] = ctrl->target_deg;
     arm->host_target_valid_mask |= bit;
     if (closed_loop)
     {

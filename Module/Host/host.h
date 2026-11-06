@@ -43,6 +43,7 @@
 #define HOST_TARGET_ACTION_SET_OPEN    0U  /* 保存目标，该关节不闭环 */
 #define HOST_TARGET_ACTION_SET_CLOSED  1U  /* 保存目标，该关节投入闭环 */
 #define HOST_TARGET_ACTION_STOP_ALL    2U  /* 全部关节退出闭环，目标保留 */
+#define HOST_TARGET_FLAG_MULTI_TURN     0x01U  /* flags bit0=1：target_deg 为多圈角 */
 
 #define HOST_PARAM_STATE_RATE_HZ    0x0001U
 #define HOST_PARAM_STATUS_RATE_HZ   0x0002U

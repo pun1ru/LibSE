@@ -74,7 +74,7 @@ void Arm_AlignHostTarget(Arm_t *arm)
                                              ctrl->limit_max_deg);
         ctrl->output = 0.0f;
         PIDReset(&ctrl->pid);
-        arm->host_target_abs_deg[i] = arm->observer.joint_abs_deg[i];
+        arm->host_target_deg[i] = ctrl->target_deg;
     }
     arm->host_closed_loop_mask = 0U;
     arm->host_target_valid_mask = 0U;

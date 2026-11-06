@@ -164,7 +164,7 @@ typedef struct {
     uint8_t host_closed_loop_mask;  /* bit i=1：关节 i 追 HOST 目标；0 位输出零力矩 */
     uint8_t host_target_valid_mask; /* bit i=1：关节 i 至少收到过一次 HOST 目标 */
     uint8_t rc_online;          /* RC frame is fresh; reported to the host status frame */
-    float host_target_abs_deg[ARM_JOINT_COUNT]; /* 上位机给出的单圈绝对目标，用于状态显示/复查 */
+    float host_target_deg[ARM_JOINT_COUNT]; /* 上位机给出的多圈目标，用于状态显示/复查 */
 } Arm_t;
 
 void Arm_Init(Arm_t *arm, const ArmConfig_t *config);
@@ -174,11 +174,12 @@ bool Arm_SetState(Arm_t *arm, ArmState_t state);
 /* Cache the receiver freshness for protocol status reporting. */
 void Arm_SetRcOnline(Arm_t *arm, bool online);
 
-/* HOST 单关节目标：joint 为 0..ARM_JOINT_COUNT-1，target_abs_deg 为单圈绝对角，
- * 必须落在该关节 config.param.limit 内。只更新指定关节，其他关节保持不变。
+/* HOST 单关节目标：joint 为 0..ARM_JOINT_COUNT-1。multi_turn=true 时 target_deg 为多圈角，
+ * 必须落在进入 HOST 时锁存的多圈限位内；false 时按旧协议解释为单圈绝对角并映射到当前圈。
+ * 只更新指定关节，其他关节保持不变。
  * closed_loop=false 时保存目标，该关节不跑 PID（只剩重力前馈；前馈关闭时输出零力矩）；只有 HOST 状态接受 */
-ArmHostTargetResult_t Arm_SetHostTarget(Arm_t *arm, uint8_t joint, float target_abs_deg,
-                                        bool closed_loop);
+ArmHostTargetResult_t Arm_SetHostTarget(Arm_t *arm, uint8_t joint, float target_deg,
+                                        bool closed_loop, bool multi_turn);
 /* HOST 链路失效或退出目标控制：关闭全部闭环、清 PID 与上一周期输出
  * 注意：状态仍是 ARM_HOST，下个 Arm_Run 起重力前馈照常叠加（遵从 ENABLE 的逻辑），
  * 所以这不再等于“零力矩”：重力前馈打开时关节会被前馈托住；要真正泄力需切 ARM_PROTECTED 或关掉重力前馈 */

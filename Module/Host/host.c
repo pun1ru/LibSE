@@ -676,10 +676,15 @@ static void Host_ProcessSetTarget(Host_t *host, const HostRequest_t *request)
     }
     else if (action == HOST_TARGET_ACTION_SET_OPEN || action == HOST_TARGET_ACTION_SET_CLOSED)
     {
-        if (joint < ARM_JOINT_COUNT)
+        const uint8_t flags = request->payload[2];
+        const bool multi_turn = (flags & HOST_TARGET_FLAG_MULTI_TURN) != 0U;
+
+        if (joint < ARM_JOINT_COUNT &&
+            (flags & (uint8_t)~HOST_TARGET_FLAG_MULTI_TURN) == 0U && request->payload[3] == 0U)
         {
             accepted = Arm_SetHostTarget(host->arm, joint, target_deg,
-                                         action == HOST_TARGET_ACTION_SET_CLOSED) == ARM_HOST_TARGET_OK;
+                                         action == HOST_TARGET_ACTION_SET_CLOSED,
+                                         multi_turn) == ARM_HOST_TARGET_OK;
         }
     }
     else
