@@ -2,6 +2,7 @@
 
 #include <string.h>
 
+#include "arm_ik.h"
 #include "arm_jointctrl.h"
 #include "arm_kinematics.h"
 
@@ -70,9 +71,10 @@ bool Arm_SetState(Arm_t *arm, ArmState_t state)
         arm->ctrl_align_pending = 1U;
         arm->host_align_pending = state == ARM_HOST ? 1U : 0U;
 
-        /* 离开 HOST 或重新进入 HOST 都从零闭环、零有效目标开始 */
+        /* 离开 HOST 或重新进入 HOST 都从零闭环、零有效目标开始，数值逆解也一并退出 */
         arm->host_closed_loop_mask = 0U;
         arm->host_target_valid_mask = 0U;
+        Arm_StopIk(arm);
 
         /* 从任何非保护状态切入保护时发一次失能；没有失能实现的电机跳过 */
         if (previous_state != ARM_PROTECTED && state == ARM_PROTECTED)
@@ -151,6 +153,8 @@ ArmHostTargetResult_t Arm_SetHostTarget(Arm_t *arm, uint8_t joint, float target_
         }
     }
 
+    /* 显式的单关节目标接管：数值逆解会在下个周期覆盖它，所以先退出 */
+    Arm_StopIk(arm);
     bit = (uint8_t)(1U << joint);
     was_closed_loop = (arm->host_closed_loop_mask & bit) != 0U;
     arm->host_target_deg[joint] = ctrl->target_deg;
@@ -178,6 +182,7 @@ void Arm_StopHostControl(Arm_t *arm)
     }
 
     arm->host_closed_loop_mask = 0U;
+    Arm_StopIk(arm);
     /* 只清上一周期已算好的前馈指令；Arm_Run 每周期都会重算，所以 HOST 下重力前馈会在下个周期恢复，
      * 要让它真正停掉靠切 ARM_PROTECTED（走零指令路径）或关闭 gravity.enable / 编译开关 */
     Arm_GravityClear(arm);

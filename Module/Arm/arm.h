@@ -8,6 +8,7 @@
 #include "Motor.h"
 #include "arm_dynamics.h"
 #include "dh.h"
+#include "ik_numeric.h"
 #include "pid.h"
 
 /* 七轴臂模块，对象是 J0 ~ J6 七个关节电机，角度统一 deg，位置统一 m
@@ -102,6 +103,13 @@ typedef struct {
     float total_output_max;
 } ArmJointGain_t;
 
+/* 数值逆解参数：numeric 的含义见 ik_numeric.h；weight 是关节权重（越大越不愿动，Arm_SetNumericIkTarget 传 NULL 时用它）
+ * 没填（numeric 全 0）时数值逆解被拒绝，与增益没填时关节不动的约定一致 */
+typedef struct {
+    IkNumericParam_t numeric;
+    float weight[ARM_JOINT_COUNT];
+} ArmIkParam_t;
+
 /* DH 表为改进 DH，每个关节一行，第 i 行的 q 对应第 i 个关节，末端坐标系即 {J6}
  * zero_point 是各关节机械零位对应的电机原始编码器值，Arm_Init 写入电机，覆盖电机初始化时的默认值
  * direction 是关节 +q 方向相对编码器计数方向的符号：+1 表示正向转编码器增大，-1 表示减小
@@ -113,6 +121,7 @@ typedef struct {
     ArmJointLimit_t limit[ARM_JOINT_COUNT];
     ArmJointGain_t gain[ARM_JOINT_COUNT];
     ArmGravityParam_t gravity;      /* 重力补偿：开关、符号、g、参数表指针，见 arm_dynamics.h */
+    ArmIkParam_t ik;                /* 数值逆解 */
 } ArmParam_t;
 
 typedef struct {
@@ -152,6 +161,22 @@ typedef struct {
     uint8_t output_active;                  /* 本周期是否真的把 torque_cmd 加进了输出，0 = 只计算没输出 */
 } ArmGravityState_t;
 
+/* 数值逆解运行状态。active 时 ARM_HOST 下每个周期在上一周期的关节目标处走一步，不再使用单关节 HOST 目标；
+ * 单关节目标、切换状态、停止 HOST 控制都会把 active 清零 */
+typedef struct {
+    uint8_t active;
+    uint8_t limit_mask;             /* bit i = 上一步里关节 i 被限位钳住 */
+    uint8_t step_limited;           /* 上一步的步长约束起了作用 */
+    uint8_t converged;              /* 上一步前误差已低于收敛阈值 */
+    uint8_t stalled;                /* 没到位却几乎不动达到 ARM_IK_STALL_CYCLES：够不到，或被限位 / 奇异挡住 */
+    uint16_t stall_cycles;
+    float pos_err_m;                /* 上一步的位置误差 */
+    float rot_err_deg;              /* 上一步的姿态误差 */
+    float target[4][4];             /* 末端目标位姿，基座系 */
+    float weight[ARM_JOINT_COUNT];
+    float reference_deg[ARM_JOINT_COUNT];   /* 零空间参考构型，进入数值逆解时锁定 */
+} ArmIkState_t;
+
 typedef struct {
     ArmConfig_t config;
     ArmState_t state;
@@ -165,6 +190,7 @@ typedef struct {
     uint8_t host_target_valid_mask; /* bit i=1：关节 i 至少收到过一次 HOST 目标 */
     uint8_t rc_online;          /* RC frame is fresh; reported to the host status frame */
     float host_target_deg[ARM_JOINT_COUNT]; /* 上位机给出的多圈目标，用于状态显示/复查 */
+    ArmIkState_t ik;
 } Arm_t;
 
 void Arm_Init(Arm_t *arm, const ArmConfig_t *config);

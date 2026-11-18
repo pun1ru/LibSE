@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "algorism.h"
+#include "arm_ik.h"
 
 static void Arm_UpdateMultiTurnLimit(const Arm_t *arm, uint8_t joint,
                                      ArmJointCtrl_t *ctrl)
@@ -120,6 +121,7 @@ void Arm_UpdateTarget(Arm_t *arm)
             arm->host_align_pending = 0U;
             arm->ctrl_align_pending = 0U;
         }
+        Arm_StepNumericIk(arm);     /* 数值逆解激活时先推进一步，再统一过限位 */
         for (uint8_t i = 0U; i < ARM_JOINT_COUNT; ++i)
         {
             ArmJointCtrl_t *ctrl = &arm->joint_ctrl[i];
