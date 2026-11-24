@@ -75,10 +75,10 @@ void Arm_AlignHostTarget(Arm_t *arm)
                                              ctrl->limit_max_deg);
         ctrl->output = 0.0f;
         PIDReset(&ctrl->pid);
-        arm->host_target_deg[i] = ctrl->target_deg;
+        arm->host.host_target_deg[i] = ctrl->target_deg;
     }
-    arm->host_closed_loop_mask = 0U;
-    arm->host_target_valid_mask = 0U;
+    arm->host.host_closed_loop_mask = 0U;
+    arm->host.host_target_valid_mask = 0U;
 }
 
 void Arm_TrackJointTarget(Arm_t *arm)
@@ -99,10 +99,10 @@ void Arm_UpdateTarget(Arm_t *arm)
     switch (arm->state)
     {
     case ARM_ENABLE:
-        if (arm->ctrl_align_pending != 0U)
+        if (arm->host.ctrl_align_pending != 0U)
         {
             Arm_AlignJointTarget(arm);
-            arm->ctrl_align_pending = 0U;
+            arm->host.ctrl_align_pending = 0U;
         }
         for (uint8_t i = 0U; i < ARM_JOINT_COUNT; ++i)
         {
@@ -115,11 +115,11 @@ void Arm_UpdateTarget(Arm_t *arm)
         break;
 
     case ARM_HOST:
-        if (arm->host_align_pending != 0U)
+        if (arm->host.host_align_pending != 0U)
         {
             Arm_AlignHostTarget(arm);
-            arm->host_align_pending = 0U;
-            arm->ctrl_align_pending = 0U;
+            arm->host.host_align_pending = 0U;
+            arm->host.ctrl_align_pending = 0U;
         }
         Arm_StepNumericIk(arm);     /* 数值逆解激活时先推进一步，再统一过限位 */
         for (uint8_t i = 0U; i < ARM_JOINT_COUNT; ++i)
@@ -140,7 +140,7 @@ void Arm_UpdateTarget(Arm_t *arm)
 
 /* 统一关节角度环：内部按状态选择闭环关节，不再区分普通控制和 HOST 控制
  *   ENABLE：全部关节 PID + 重力前馈
- *   HOST：host_closed_loop_mask 为 1 的关节 PID + 重力前馈；其余关节 PID 清零，只保留重力前馈
+ *   HOST：host.host_closed_loop_mask 为 1 的关节 PID + 重力前馈；其余关节 PID 清零，只保留重力前馈
  *   其他：发零指令
  * 目标与限位已由 Arm_UpdateTarget 准备，这里不重复更新目标
  * 误差不做最短路径折叠；控制输出写进各电机并发送 */
@@ -158,7 +158,7 @@ void Arm_JointControl(Arm_t *arm)
         const float observed_deg = arm->observer.joint_deg[i];
         const bool closed_loop =
             (arm->state == ARM_ENABLE) ||
-            ((arm->host_closed_loop_mask & (uint8_t)(1U << i)) != 0U);
+            ((arm->host.host_closed_loop_mask & (uint8_t)(1U << i)) != 0U);
 
         if (closed_loop)
         {

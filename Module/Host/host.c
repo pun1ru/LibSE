@@ -183,11 +183,11 @@ static void Host_PackJointRecord(const Arm_t *arm, uint8_t joint, uint8_t *out)
     const uint8_t bit = (uint8_t)(1U << joint);
     uint8_t flags = feedback->status != MOTOR_NO_FEEDBACK ? HOST_JOINT_FLAG_ONLINE : 0U;
 
-    if (arm->state == ARM_HOST && (arm->host_target_valid_mask & bit) != 0U)
+    if (arm->state == ARM_HOST && (arm->host.host_target_valid_mask & bit) != 0U)
     {
         flags |= HOST_JOINT_FLAG_HOST_TARGET_VALID;
     }
-    if (arm->state == ARM_HOST && (arm->host_closed_loop_mask & bit) != 0U)
+    if (arm->state == ARM_HOST && (arm->host.host_closed_loop_mask & bit) != 0U)
     {
         flags |= HOST_JOINT_FLAG_HOST_CLOSED_LOOP;
     }
@@ -212,7 +212,7 @@ static void Host_PackJointState(Host_t *host, uint8_t *payload)
     uint16_t flags = 0U;
     uint16_t age = HOST_CMD_AGE_NONE;
 
-    if (arm->rc_online != 0U)
+    if (arm->host.rc_online != 0U)
     {
         flags |= HOST_FLAG_RC_ONLINE;
     }
@@ -220,11 +220,11 @@ static void Host_PackJointState(Host_t *host, uint8_t *payload)
     {
         flags |= HOST_FLAG_HOST_LINK_OK;
     }
-    if (arm->ctrl_align_pending != 0U || arm->host_align_pending != 0U)
+    if (arm->host.ctrl_align_pending != 0U || arm->host.host_align_pending != 0U)
     {
         flags |= HOST_FLAG_CTRL_ALIGNING;
     }
-    if (arm->state == ARM_HOST && arm->host_closed_loop_mask != 0U)
+    if (arm->state == ARM_HOST && arm->host.host_closed_loop_mask != 0U)
     {
         flags |= HOST_FLAG_HOST_CLOSED_LOOP;
     }
@@ -763,7 +763,7 @@ static void Host_ProcessCommands(Host_t *host)
         Host_ProcessRequest(host, &request);
     }
 
-    if (host->arm->state == ARM_HOST && host->arm->host_closed_loop_mask != 0U &&
+    if (host->arm->state == ARM_HOST && host->arm->host.host_closed_loop_mask != 0U &&
         (host->ever_rx == 0U || Host_ElapsedMs(now_ms, host->last_rx_ms) > HOST_LINK_TIMEOUT_MS))
     {
         Arm_StopHostControl(host->arm);

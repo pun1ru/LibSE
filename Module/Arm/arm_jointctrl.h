@@ -14,7 +14,7 @@ void Arm_TrackJointTarget(Arm_t *arm);
  * ENABLE/HOST 的首次进入对齐、PID 清零也在这里处理 */
 void Arm_UpdateTarget(Arm_t *arm);
 /* 统一关节控制：内部按状态选择闭环关节，不再区分普通控制和 HOST 控制
- * ENABLE 全部关节闭环，HOST 由 host_closed_loop_mask 决定，其他状态发零指令
+ * ENABLE 全部关节闭环，HOST 由 host.host_closed_loop_mask 决定，其他状态发零指令
  * 限位在上一层的目标更新里处理；误差不做最短路径折叠，控制输出写进各电机并发送 */
 void Arm_JointControl(Arm_t *arm);
 

@@ -34,8 +34,8 @@ void Arm_Init(Arm_t *arm, const ArmConfig_t *config)
     arm->config = *config;
     arm->state = config->state.init_state;
     /* 无论初始状态是不是使能态，第一次进使能都要先对齐目标、清 PID */
-    arm->ctrl_align_pending = 1U;
-    arm->host_align_pending = config->state.init_state == ARM_HOST ? 1U : 0U;
+    arm->host.ctrl_align_pending = 1U;
+    arm->host.host_align_pending = config->state.init_state == ARM_HOST ? 1U : 0U;
 
     for (uint8_t i = 0U; i < ARM_JOINT_COUNT; ++i)
     {
@@ -66,14 +66,14 @@ bool Arm_SetState(Arm_t *arm, ArmState_t state)
     {
         arm->state = state;
         /* 进入新状态后第一个周期就发使能帧 */
-        arm->enable_divider = 0U;
+        arm->host.enable_divider = 0U;
         /* 进使能态不能沿用上一个状态的目标和积分，下个周期先对齐观测 */
-        arm->ctrl_align_pending = 1U;
-        arm->host_align_pending = state == ARM_HOST ? 1U : 0U;
+        arm->host.ctrl_align_pending = 1U;
+        arm->host.host_align_pending = state == ARM_HOST ? 1U : 0U;
 
         /* 离开 HOST 或重新进入 HOST 都从零闭环、零有效目标开始，数值逆解也一并退出 */
-        arm->host_closed_loop_mask = 0U;
-        arm->host_target_valid_mask = 0U;
+        arm->host.host_closed_loop_mask = 0U;
+        arm->host.host_target_valid_mask = 0U;
         Arm_StopIk(arm);
 
         /* 从任何非保护状态切入保护时发一次失能；没有失能实现的电机跳过 */
@@ -89,7 +89,7 @@ void Arm_SetRcOnline(Arm_t *arm, bool online)
 {
     if (arm != NULL)
     {
-        arm->rc_online = online ? 1U : 0U;
+        arm->host.rc_online = online ? 1U : 0U;
     }
 }
 
@@ -117,11 +117,11 @@ ArmHostTargetResult_t Arm_SetHostTarget(Arm_t *arm, uint8_t joint, float target_
     /* A target may arrive before the first HOST control cycle. Latch this
      * entry's limits first, then apply the PC target instead of letting the
      * deferred alignment overwrite it on the next Arm_Run. */
-    if (arm->host_align_pending != 0U)
+    if (arm->host.host_align_pending != 0U)
     {
         Arm_AlignHostTarget(arm);
-        arm->host_align_pending = 0U;
-        arm->ctrl_align_pending = 0U;
+        arm->host.host_align_pending = 0U;
+        arm->host.ctrl_align_pending = 0U;
     }
 
     ctrl = &arm->joint_ctrl[joint];
@@ -156,16 +156,16 @@ ArmHostTargetResult_t Arm_SetHostTarget(Arm_t *arm, uint8_t joint, float target_
     /* 显式的单关节目标接管：数值逆解会在下个周期覆盖它，所以先退出 */
     Arm_StopIk(arm);
     bit = (uint8_t)(1U << joint);
-    was_closed_loop = (arm->host_closed_loop_mask & bit) != 0U;
-    arm->host_target_deg[joint] = ctrl->target_deg;
-    arm->host_target_valid_mask |= bit;
+    was_closed_loop = (arm->host.host_closed_loop_mask & bit) != 0U;
+    arm->host.host_target_deg[joint] = ctrl->target_deg;
+    arm->host.host_target_valid_mask |= bit;
     if (closed_loop)
     {
-        arm->host_closed_loop_mask |= bit;
+        arm->host.host_closed_loop_mask |= bit;
     }
     else
     {
-        arm->host_closed_loop_mask &= (uint8_t)~bit;
+        arm->host.host_closed_loop_mask &= (uint8_t)~bit;
     }
     if (closed_loop != was_closed_loop)
     {
@@ -181,7 +181,7 @@ void Arm_StopHostControl(Arm_t *arm)
         return;
     }
 
-    arm->host_closed_loop_mask = 0U;
+    arm->host.host_closed_loop_mask = 0U;
     Arm_StopIk(arm);
     /* 只清上一周期已算好的前馈指令；Arm_Run 每周期都会重算，所以 HOST 下重力前馈会在下个周期恢复，
      * 要让它真正停掉靠切 ARM_PROTECTED（走零指令路径）或关闭 gravity.enable / 编译开关 */
@@ -226,12 +226,12 @@ void Arm_Run(Arm_t *arm)
     /* 使能帧重发与目标来源解耦：ENABLE/HOST 都保持原来的周期重发节奏 */
     if (arm->state == ARM_ENABLE || arm->state == ARM_HOST)
     {
-        if (arm->enable_divider == 0U)
+        if (arm->host.enable_divider == 0U)
         {
             Arm_SendEnableCommand(arm);
-            arm->enable_divider = ARM_ENABLE_RESEND_DIV;
+            arm->host.enable_divider = ARM_ENABLE_RESEND_DIV;
         }
-        --arm->enable_divider;
+        --arm->host.enable_divider;
     }
 
     Arm_UpdateTarget(arm);

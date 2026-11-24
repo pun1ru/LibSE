@@ -177,12 +177,8 @@ typedef struct {
     float reference_deg[ARM_JOINT_COUNT];   /* 零空间参考构型，进入数值逆解时锁定 */
 } ArmIkState_t;
 
+/* 使能与 HOST 控制状态 */
 typedef struct {
-    ArmConfig_t config;
-    ArmState_t state;
-    ArmObserver_t observer;
-    ArmJointCtrl_t joint_ctrl[ARM_JOINT_COUNT];
-    ArmGravityState_t gravity;
     uint16_t enable_divider;    /* 使能帧重发倒计时，0 表示本周期发 */
     uint8_t ctrl_align_pending; /* 进入非保护态后第一次控制前，把目标对齐观测并清 PID */
     uint8_t host_align_pending; /* 进入 HOST 后第一次控制前，锁存限位并把目标对齐观测 */
@@ -190,6 +186,15 @@ typedef struct {
     uint8_t host_target_valid_mask; /* bit i=1：关节 i 至少收到过一次 HOST 目标 */
     uint8_t rc_online;          /* RC frame is fresh; reported to the host status frame */
     float host_target_deg[ARM_JOINT_COUNT]; /* 上位机给出的多圈目标，用于状态显示/复查 */
+} ArmHost_t;
+
+typedef struct {
+    ArmConfig_t config;
+    ArmState_t state;
+    ArmObserver_t observer;
+    ArmJointCtrl_t joint_ctrl[ARM_JOINT_COUNT];
+    ArmGravityState_t gravity;
+    ArmHost_t host;
     ArmIkState_t ik;
 } Arm_t;
 
