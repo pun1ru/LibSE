@@ -11,6 +11,13 @@ void UartMonitor_Reset(UartMonitor_t *monitor)
     monitor->rx_error_count = 0U;
     monitor->rx_overflow_count = 0U;
     monitor->tx_error_count = 0U;
+    monitor->rx_restart_attempts = 0U;
+    monitor->rx_restart_failures = 0U;
+    monitor->tx_timeout_count = 0U;
+    monitor->last_error_code = 0U;
+    monitor->last_error_tick = 0U;
+    monitor->last_restart_tick = 0U;
+    monitor->tx_start_tick = 0U;
 }
 
 void UartMonitor_RecordRx(UartMonitor_t *monitor, uint16_t size,
@@ -119,7 +126,9 @@ void UART_Register(UartInstance_t *uart)
     uart_registry[index] = uart;
     UART_AttachBuffers(uart, index);
     uart->rx_started = 0U;
+    uart->rx_auto_restart = 0U;
     uart->tx_busy = 0U;
+    uart->rx_byte = 0U;
     UartMonitor_Reset(&uart->monitor);
 }
 
@@ -140,6 +149,7 @@ void UART_Unregister(UartInstance_t *uart)
             }
             uart->registered = 0U;
             uart->rx_started = 0U;
+            uart->rx_auto_restart = 0U;
             uart->tx_busy = 0U;
             return;
         }
@@ -183,19 +193,25 @@ HAL_StatusTypeDef UART_StartReceiveEx(UartInstance_t *uart)
     uint8_t *buffer;
 
     if (uart == NULL || uart->registered == 0U || uart->huart == NULL ||
-        uart->rx_capacity == 0U || uart->rx_buffer[uart->active_buffer] == NULL ||
-        uart->huart->hdmarx == NULL) {
+        uart->rx_capacity == 0U || uart->rx_buffer[uart->active_buffer] == NULL) {
         return HAL_ERROR;
     }
 
-    buffer = uart->rx_buffer[uart->active_buffer];
-    SCB_InvalidateDCache_by_Addr(buffer, (int32_t)uart->rx_capacity);
-    status = HAL_UARTEx_ReceiveToIdle_DMA(uart->huart, buffer,
-                                          uart->rx_capacity);
+    uart->rx_auto_restart = 1U;
+    if (uart->huart->hdmarx != NULL) {
+        buffer = uart->rx_buffer[uart->active_buffer];
+        SCB_InvalidateDCache_by_Addr(buffer, (int32_t)uart->rx_capacity);
+        status = HAL_UARTEx_ReceiveToIdle_DMA(uart->huart, buffer,
+                                              uart->rx_capacity);
+    } else {
+        status = HAL_UART_Receive_IT(uart->huart, &uart->rx_byte, 1U);
+    }
     if (status == HAL_OK) {
-        /* Half-transfer callbacks are not packet boundaries.  Keeping only
-           IDLE and transfer-complete events matches serialleg2027. */
-        __HAL_DMA_DISABLE_IT(uart->huart->hdmarx, DMA_IT_HT);
+        if (uart->huart->hdmarx != NULL) {
+            /* Half-transfer callbacks are not packet boundaries.  Keeping only
+               IDLE and transfer-complete events matches serialleg2027. */
+            __HAL_DMA_DISABLE_IT(uart->huart->hdmarx, DMA_IT_HT);
+        }
         uart->rx_started = 1U;
     } else {
         uart->rx_started = 0U;
@@ -215,6 +231,7 @@ HAL_StatusTypeDef UART_StopReceive(UartInstance_t *uart)
     if (uart == NULL || uart->registered == 0U || uart->huart == NULL) {
         return HAL_ERROR;
     }
+    uart->rx_auto_restart = 0U;
     if (uart->rx_started == 0U) {
         return HAL_OK;
     }
@@ -241,10 +258,15 @@ HAL_StatusTypeDef UART_TransmitDMAEx(UartInstance_t *uart,
     }
 
     memcpy(uart->tx_buffer, data, size);
-    SCB_CleanDCache_by_Addr((uint32_t *)uart->tx_buffer, (int32_t)size);
-    status = HAL_UART_Transmit_DMA(uart->huart, uart->tx_buffer, size);
+    if (uart->huart->hdmatx != NULL) {
+        SCB_CleanDCache_by_Addr((uint32_t *)uart->tx_buffer, (int32_t)size);
+        status = HAL_UART_Transmit_DMA(uart->huart, uart->tx_buffer, size);
+    } else {
+        status = HAL_UART_Transmit_IT(uart->huart, uart->tx_buffer, size);
+    }
     if (status == HAL_OK) {
         uart->tx_busy = 1U;
+        uart->monitor.tx_start_tick = HAL_GetTick();
     }
     return status;
 }
@@ -275,6 +297,46 @@ void UART_ResetStats(UartInstance_t *uart)
     taskEXIT_CRITICAL();
 }
 
+static void UART_TryRestart(UartInstance_t *uart)
+{
+    if (uart == NULL || uart->huart == NULL) {
+        return;
+    }
+
+    uart->monitor.last_restart_tick = HAL_GetTick();
+    uart->monitor.rx_restart_attempts++;
+    if (UART_StartReceiveEx(uart) != HAL_OK) {
+        uart->monitor.rx_restart_failures++;
+    }
+}
+
+void UART_MonitorPoll(void)
+{
+    uint32_t now = HAL_GetTick();
+
+    for (uint8_t i = 0U; i < UART_MAX_INSTANCES; ++i) {
+        UartInstance_t *uart = uart_registry[i];
+
+        if (uart == NULL || uart->registered == 0U || uart->huart == NULL) {
+            continue;
+        }
+
+        if (uart->rx_auto_restart != 0U && uart->rx_started == 0U &&
+            (uint32_t)(now - uart->monitor.last_restart_tick) >=
+            UART_MONITOR_RETRY_MS) {
+            UART_TryRestart(uart);
+        }
+
+        if (uart->tx_busy != 0U &&
+            (uint32_t)(now - uart->monitor.tx_start_tick) >=
+            UART_MONITOR_TX_TIMEOUT_MS) {
+            uart->monitor.tx_timeout_count++;
+            uart->tx_busy = 0U;
+            (void)HAL_UART_AbortTransmit(uart->huart);
+        }
+    }
+}
+
 /* 先切换缓冲并重启 DMA，再解包：重启越早，两包之间漏字节的窗口越短
  * 两块缓冲交替，刚收完的那块在回调返回前不会被 DMA 再写 */
 void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t size)
@@ -292,9 +354,7 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t size)
     uart->rx_started = 0U;
 
     uart->active_buffer ^= 1U;
-    if (UART_StartReceiveEx(uart) != HAL_OK) {
-        UartMonitor_RecordRxError(&uart->monitor);
-    }
+    UART_TryRestart(uart);
 
     if (size == 0U) {
         UartMonitor_RecordRxError(&uart->monitor);
@@ -306,12 +366,31 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t size)
     }
 }
 
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+    UartInstance_t *uart = UART_Find(huart);
+    uint8_t byte;
+
+    if (uart == NULL || uart->registered == 0U || uart->huart->hdmarx != NULL) {
+        return;
+    }
+
+    byte = uart->rx_byte;
+    UartMonitor_RecordRx(&uart->monitor, 1U, 0xFFU);
+    uart->rx_started = 0U;
+    UART_TryRestart(uart);
+    if (uart->on_receive != NULL) {
+        uart->on_receive(uart->rx_context, &byte, 1U);
+    }
+}
+
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
 {
     UartInstance_t *uart = UART_Find(huart);
 
     if (uart != NULL) {
         uart->tx_busy = 0U;
+        uart->monitor.tx_start_tick = 0U;
     }
 }
 
@@ -326,19 +405,20 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
         return;
     }
 
+    uart->monitor.last_error_code = huart->ErrorCode;
+    uart->monitor.last_error_tick = HAL_GetTick();
     if (huart->gState != HAL_UART_STATE_BUSY_TX) {
         uart->tx_busy = 0U;
+        uart->monitor.tx_start_tick = 0U;
     }
 
-    if (uart->rx_started != 0U && huart->RxState == HAL_UART_STATE_READY) {
+    if (uart->rx_auto_restart != 0U) {
         UartMonitor_RecordRxError(&uart->monitor);
         if (uart->on_error != NULL) {
             uart->on_error(uart->rx_context);
         }
         uart->rx_started = 0U;
-        if (UART_StartReceiveEx(uart) != HAL_OK) {
-            UartMonitor_RecordRxError(&uart->monitor);
-        }
+        UART_TryRestart(uart);
     } else {
         UartMonitor_RecordTxError(&uart->monitor);
     }

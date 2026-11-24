@@ -10,12 +10,15 @@
 extern "C" {
 #endif
 
-/* 接收：ReceiveToIdle + DMA 双缓冲，参考 damiao_mc02_bsp 的 drv_uart
+/* 接收：有 RX DMA 时使用 ReceiveToIdle + DMA 双缓冲；没有 DMA 流时自动退化为单字节中断接收。
+ * DMA 双缓冲参考 damiao_mc02_bsp 的 drv_uart
  * 一包结束（IDLE 或缓冲收满）时，中断回调里先切换缓冲并重启 DMA，再对刚收完的那块调用绑定的 on_receive
  * 解析直接在中断里完成，不经队列和任务，接收绑定的用法同 CAN_BindRx */
 #define UART_DMA_BUFFER_SIZE       256U
 #define UART_TX_BUFFER_SIZE        UART_DMA_BUFFER_SIZE
-#define UART_MAX_INSTANCES         6U
+#define UART_MAX_INSTANCES         8U
+#define UART_MONITOR_RETRY_MS      10U
+#define UART_MONITOR_TX_TIMEOUT_MS 50U
 
 typedef struct {
     volatile uint16_t last_rx_size;
@@ -24,6 +27,13 @@ typedef struct {
     volatile uint32_t rx_error_count;
     volatile uint32_t rx_overflow_count;
     volatile uint32_t tx_error_count;
+    volatile uint32_t rx_restart_attempts;
+    volatile uint32_t rx_restart_failures;
+    volatile uint32_t tx_timeout_count;
+    volatile uint32_t last_error_code;
+    volatile uint32_t last_error_tick;
+    volatile uint32_t last_restart_tick;
+    volatile uint32_t tx_start_tick;
 } UartMonitor_t;
 
 void UartMonitor_Reset(UartMonitor_t *monitor);
@@ -34,6 +44,8 @@ void UartMonitor_RecordRxOverflow(UartMonitor_t *monitor);
 void UartMonitor_RecordTxError(UartMonitor_t *monitor);
 uint16_t UartMonitor_GetLastRxSize(const UartMonitor_t *monitor);
 uint8_t UartMonitor_GetLastRxEvent(const UartMonitor_t *monitor);
+/* 周期调用：接收 DMA/中断停止后自动重挂，发送长期未完成时中止并释放端口。 */
+void UART_MonitorPoll(void);
 
 /* 接收回调：在串口中断里执行，data 只在回调期间有效（下一包会覆盖这块缓冲），要保留的自己拷走
  * 只解析并写自己的缓存，保持简短，禁止调用非 FromISR 的 FreeRTOS 接口 */
@@ -60,9 +72,11 @@ typedef struct UartInstance {
     void *tx_context;
 
     volatile uint8_t rx_started;
+    volatile uint8_t rx_auto_restart;
     volatile uint8_t tx_busy;
     volatile uint8_t registered;
     uint8_t instance_index;
+    uint8_t rx_byte;
     UartMonitor_t monitor;
 } UartInstance_t;
 
@@ -86,7 +100,8 @@ HAL_StatusTypeDef UART_StartReceiveEx(UartInstance_t *uart);
 void UART_StartReceive(UartInstance_t *uart);
 HAL_StatusTypeDef UART_StopReceive(UartInstance_t *uart);
 
-/* DMA transmit.  The Ex variant returns the HAL status. */
+/* DMA transmit.  Ports without a TX DMA stream fall back to interrupt transmit.
+ * The Ex variant returns the HAL status. */
 HAL_StatusTypeDef UART_TransmitDMAEx(UartInstance_t *uart,
                                      const uint8_t *data,
                                      uint16_t size);

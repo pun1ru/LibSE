@@ -245,9 +245,14 @@ static HAL_StatusTypeDef CAN_ActivateNotifications(CanInstance_t *instance)
     }
 
     uint32_t notification = (instance->rx_fifo == FDCAN_RX_FIFO0) ?
-                            FDCAN_IT_RX_FIFO0_NEW_MESSAGE :
-                            FDCAN_IT_RX_FIFO1_NEW_MESSAGE;
-    notification |= FDCAN_IT_BUS_OFF;
+                            (FDCAN_IT_RX_FIFO0_NEW_MESSAGE |
+                             FDCAN_IT_RX_FIFO0_MESSAGE_LOST) :
+                            (FDCAN_IT_RX_FIFO1_NEW_MESSAGE |
+                             FDCAN_IT_RX_FIFO1_MESSAGE_LOST);
+    notification |= FDCAN_IT_ERROR_WARNING |
+                    FDCAN_IT_ERROR_PASSIVE |
+                    FDCAN_IT_ERROR_LOGGING_OVERFLOW |
+                    FDCAN_IT_BUS_OFF;
     return HAL_FDCAN_ActivateNotification(instance->can, notification, 0U);
 }
 
@@ -604,6 +609,12 @@ static void CANReceive_FromIsr(FDCAN_HandleTypeDef *hcan, uint32_t fifo)
 
 void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hcan, uint32_t flags)
 {
+    CanInstance_t *instance = CAN_InstanceFor(hcan);
+
+    if (instance != NULL &&
+        (flags & FDCAN_IT_RX_FIFO0_MESSAGE_LOST) != 0U) {
+        instance->monitor.rx_fifo0_lost++;
+    }
     if ((flags & FDCAN_IT_RX_FIFO0_NEW_MESSAGE) != 0U) {
         CANReceive_FromIsr(hcan, FDCAN_RX_FIFO0);
     }
@@ -611,6 +622,12 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hcan, uint32_t flags)
 
 void HAL_FDCAN_RxFifo1Callback(FDCAN_HandleTypeDef *hcan, uint32_t flags)
 {
+    CanInstance_t *instance = CAN_InstanceFor(hcan);
+
+    if (instance != NULL &&
+        (flags & FDCAN_IT_RX_FIFO1_MESSAGE_LOST) != 0U) {
+        instance->monitor.rx_fifo1_lost++;
+    }
     if ((flags & FDCAN_IT_RX_FIFO1_NEW_MESSAGE) != 0U) {
         CANReceive_FromIsr(hcan, FDCAN_RX_FIFO1);
     }
@@ -621,6 +638,7 @@ void HAL_FDCAN_ErrorCallback(FDCAN_HandleTypeDef *hcan)
     CanInstance_t *instance = CAN_InstanceFor(hcan);
     if (instance != NULL) {
         instance->monitor.err_callback++;
+        instance->monitor.hal_error_code = hcan->ErrorCode;
     }
 }
 
@@ -630,8 +648,23 @@ void HAL_FDCAN_ErrorStatusCallback(FDCAN_HandleTypeDef *hcan, uint32_t flags)
     if (instance != NULL)
     {
         instance->monitor.err_status_callback++;
+        if ((flags & FDCAN_IT_ERROR_WARNING) != 0U)
+        {
+            instance->monitor.error_warning_callback++;
+            instance->monitor.warning = 1U;
+        }
+        if ((flags & FDCAN_IT_ERROR_PASSIVE) != 0U)
+        {
+            instance->monitor.error_passive_callback++;
+            instance->monitor.error_passive = 1U;
+        }
+        if ((flags & FDCAN_IT_ERROR_LOGGING_OVERFLOW) != 0U)
+        {
+            instance->monitor.error_log_overflow_callback++;
+        }
         if ((flags & FDCAN_IT_BUS_OFF) != 0U)
         {
+            instance->monitor.error_passive = 1U;
             instance->monitor.bus_off = 1U;
         }
     }

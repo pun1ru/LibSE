@@ -35,6 +35,11 @@ typedef struct {
     uint16_t last_fail_id;
     uint32_t err_callback;
     uint32_t err_status_callback;
+    uint32_t error_warning_callback;
+    uint32_t error_passive_callback;
+    uint32_t error_log_overflow_callback;
+    uint32_t rx_fifo0_lost;
+    uint32_t rx_fifo1_lost;
     uint32_t err_reinit;
     uint32_t tx_fifo_capacity;
     uint32_t tx_fifo_free;
