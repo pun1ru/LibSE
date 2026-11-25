@@ -121,7 +121,7 @@ void Arm_UpdateTarget(Arm_t *arm)
             arm->host.host_align_pending = 0U;
             arm->host.ctrl_align_pending = 0U;
         }
-        Arm_StepNumericIk(arm);     /* 数值逆解激活时先推进一步，再统一过限位 */
+        Arm_StepIk(arm);            /* 按配置的 IK 类型处理，再统一过限位 */
         for (uint8_t i = 0U; i < ARM_JOINT_COUNT; ++i)
         {
             ArmJointCtrl_t *ctrl = &arm->joint_ctrl[i];

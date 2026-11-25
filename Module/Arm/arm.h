@@ -8,6 +8,7 @@
 #include "Motor.h"
 #include "arm_dynamics.h"
 #include "dh.h"
+#include "ik_analytic.h"
 #include "ik_numeric.h"
 #include "pid.h"
 
@@ -49,6 +50,11 @@ typedef enum {
     ARM_HOST_TARGET_WRONG_STATE,
     ARM_HOST_TARGET_BAD_TARGET
 } ArmHostTargetResult_t;
+
+typedef enum {
+    ARM_IK_TYPE_NUMERIC = 0,
+    ARM_IK_TYPE_ANALYTIC
+} ArmIkType_t;
 
 typedef enum {
     ARM_J0 = 0,
@@ -161,8 +167,8 @@ typedef struct {
     uint8_t output_active;                  /* 本周期是否真的把 torque_cmd 加进了输出，0 = 只计算没输出 */
 } ArmGravityState_t;
 
-/* 数值逆解运行状态。active 时 ARM_HOST 下每个周期在上一周期的关节目标处走一步，不再使用单关节 HOST 目标；
- * 单关节目标、切换状态、停止 HOST 控制都会把 active 清零 */
+/* 逆解运行状态。NUMERIC 每周期推进一个微分步；ANALYTIC 在设置目标时一次求出全部关节角。
+ * 单关节目标、切换状态、停止 HOST 控制都会把 active 清零。 */
 typedef struct {
     uint8_t active;
     uint8_t limit_mask;             /* bit i = 上一步里关节 i 被限位钳住 */
@@ -175,6 +181,11 @@ typedef struct {
     float target[4][4];             /* 末端目标位姿，基座系 */
     float weight[ARM_JOINT_COUNT];
     float reference_deg[ARM_JOINT_COUNT];   /* 零空间参考构型，进入数值逆解时锁定 */
+    IkAnalyticBranch_t analytic_branch;
+    float analytic_psi_deg;
+    uint8_t analytic_valid;
+    uint8_t analytic_shoulder_singular;
+    uint8_t analytic_wrist_singular;
 } ArmIkState_t;
 
 /* 使能与 HOST 控制状态 */
@@ -191,6 +202,7 @@ typedef struct {
 typedef struct {
     ArmConfig_t config;
     ArmState_t state;
+    ArmIkType_t ik_type;
     ArmObserver_t observer;
     ArmJointCtrl_t joint_ctrl[ARM_JOINT_COUNT];
     ArmGravityState_t gravity;

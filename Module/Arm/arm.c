@@ -33,6 +33,7 @@ void Arm_Init(Arm_t *arm, const ArmConfig_t *config)
     memset(arm, 0, sizeof(*arm));
     arm->config = *config;
     arm->state = config->state.init_state;
+    arm->ik_type = ARM_IK_TYPE_NUMERIC;
     /* 无论初始状态是不是使能态，第一次进使能都要先对齐目标、清 PID */
     arm->host.ctrl_align_pending = 1U;
     arm->host.host_align_pending = config->state.init_state == ARM_HOST ? 1U : 0U;
