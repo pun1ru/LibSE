@@ -1,5 +1,6 @@
 #include "LKMotor.h"
 
+#include <math.h>
 #include <string.h>
 
 #define LK_CMD_MOTOR_OFF           0x80U
@@ -16,6 +17,9 @@
 #define LK_CMD_POSITION_LIMITED    0xA4U
 #define LK_ANGLE_LSB_PER_TURN      36000LL
 #define LK_DPS_TO_RPM              (60.0f / 360.0f)
+#define LK_POSITION_STATE2_POLL_DIV     50U
+#define LK_POSITION_ERROR_POLL_DIV      100U
+#define LK_POSITION_DEFAULT_OUTPUT_DPS  30.0f
 #define LK_ERROR_UNDERVOLTAGE      (1U << 0U)
 #define LK_ERROR_OVERVOLTAGE       (1U << 1U)
 #define LK_ERROR_MOS_OVERTEMP      (1U << 2U)
@@ -58,12 +62,23 @@ static uint16_t LKMotor_ReadU16(const uint8_t *data)
     return (uint16_t)data[0] | ((uint16_t)data[1] << 8);
 }
 
+static int16_t LKMotor_ReadS16(const uint8_t *data)
+{
+    return (int16_t)LKMotor_ReadU16(data);
+}
+
 static void LKMotor_WriteU32(uint8_t *data, uint32_t value)
 {
     data[0] = (uint8_t)value;
     data[1] = (uint8_t)(value >> 8);
     data[2] = (uint8_t)(value >> 16);
     data[3] = (uint8_t)(value >> 24);
+}
+
+static void LKMotor_WriteU16(uint8_t *data, uint16_t value)
+{
+    data[0] = (uint8_t)value;
+    data[1] = (uint8_t)(value >> 8);
 }
 
 static float LKMotor_Limit(float value, float limit)
@@ -92,6 +107,63 @@ static void LKMotor_SendSimple(Motor_t *base, uint8_t command)
     uint8_t data[8] = {0};
     data[0] = command;
     LKMotor_SendFrame(motor, data);
+}
+
+static void LKMotor_SchedulePositionFeedback(LKMotor_t *motor)
+{
+    const uint32_t phase = motor->motor_config.motor_id;
+    const uint32_t state2_phase = phase + 3U;
+    const uint32_t error_phase = phase + 1U;
+    uint8_t data[8] = {0};
+    const uint32_t cycle = ++motor->position_poll_counter;
+
+    /* At a 2 ms control period the absolute angle is refreshed every cycle.
+     * State2 and error are lower-rate maintenance fields. */
+    data[0] = LK_CMD_READ_MULTI_ANGLE;
+    LKMotor_SendFrame(motor, data);
+
+    if ((cycle % LK_POSITION_ERROR_POLL_DIV) ==
+        (error_phase % LK_POSITION_ERROR_POLL_DIV))
+    {
+        data[0] = LK_CMD_READ_ERROR;
+        LKMotor_SendFrame(motor, data);
+    }
+    else if ((cycle % LK_POSITION_STATE2_POLL_DIV) ==
+             (state2_phase % LK_POSITION_STATE2_POLL_DIV))
+    {
+        data[0] = LK_CMD_READ_STATE;
+        LKMotor_SendFrame(motor, data);
+    }
+}
+
+static void LKMotor_UpdateAbsoluteFeedback(LKMotor_t *motor, int64_t angle_raw)
+{
+    Feedback_t *feedback = &motor->base.feedback;
+    const float relative_motor_deg =
+        (float)(angle_raw - motor->zero_angle_raw) *
+        LK_ANGLE_DEGREE_PER_LSB;
+    float absolute_deg = fmodf(relative_motor_deg, 360.0f);
+
+    if (absolute_deg <= -180.0f)
+    {
+        absolute_deg += 360.0f;
+    }
+    else if (absolute_deg > 180.0f)
+    {
+        absolute_deg -= 360.0f;
+    }
+
+    feedback->multi_angle_deg = relative_motor_deg;
+    feedback->multi_angle_rad = relative_motor_deg * MOTOR_DEG_TO_RAD;
+    feedback->abs_angle_deg = absolute_deg;
+    feedback->abs_angle_rad = absolute_deg * MOTOR_DEG_TO_RAD;
+    if (feedback->status == MOTOR_NO_FEEDBACK)
+    {
+        feedback->status = MOTOR_ENABLED;
+    }
+    motor->base.multi_turn_count = 0;
+    motor->base.last_abs_angle_rad = feedback->abs_angle_rad;
+    motor->base.feedback_angle_valid = 1U;
 }
 
 static void LKMotor_Enable(Motor_t *base)
@@ -137,9 +209,15 @@ void LKMotor_Init(LKMotor_t *motor, FDCAN_HandleTypeDef *can,
 
     memset(motor, 0, sizeof(*motor));
     motor->motor_config = *config;
+    motor->motor_config.feedback_id =
+        (uint16_t)(LK_CAN_COMMAND_ID_BASE + config->motor_id);
+    motor->zero_angle_raw =
+        ((int64_t)config->zero_point * LK_ANGLE_LSB_PER_TURN +
+         (int64_t)(LK_ENCODER_COUNTS / 2U)) /
+        (int64_t)LK_ENCODER_COUNTS;
     Motor_BaseInit(&motor->base, can, config->zero_point, config->inverse, param->gear_ratio);
     motor->base.motorcmd.control_mode = config->control_mode;
-    motor->base.feedback_id = config->feedback_id;
+    motor->base.feedback_id = motor->motor_config.feedback_id;
     motor->base.torque_constant = param->torque_constant;
     motor->base.motorops.enable = LKMotor_Enable;
     motor->base.motorops.disable = LKMotor_Disable;
@@ -180,20 +258,52 @@ void LKMotor_SendCommand(LKMotor_t *motor)
         LKMotor_WriteU32(&data[4], (uint32_t)setpoint);
         break;
     case MODE_POSITION:
-        /* position: rad -> 0.01 deg/LSB，最大速度由上位机 Max Speed 限制 */
-        setpoint = (int32_t)(command->position * MOTOR_RAD_TO_DEG /
-                             LK_ANGLE_DEGREE_PER_LSB);
-        data[0] = LK_CMD_POSITION_CONTROL;
+    {
+        const float target_motor_deg =
+            command->position * MOTOR_RAD_TO_DEG;
+        int64_t target_raw = motor->zero_angle_raw +
+                             (int64_t)llroundf(target_motor_deg /
+                                               LK_ANGLE_DEGREE_PER_LSB);
+        float max_speed_dps = fabsf(command->velocity * MOTOR_RAD_TO_DEG);
+
+        if (!(max_speed_dps >= 1.0f))
+        {
+            max_speed_dps = LK_POSITION_DEFAULT_OUTPUT_DPS;
+        }
+        max_speed_dps = LKMotor_Limit(max_speed_dps, 65535.0f);
+
+        if (target_raw > INT32_MAX)
+        {
+            target_raw = INT32_MAX;
+        }
+        else if (target_raw < INT32_MIN)
+        {
+            target_raw = INT32_MIN;
+        }
+        setpoint = (int32_t)target_raw;
+        data[0] = LK_CMD_POSITION_LIMITED;
+        LKMotor_WriteU16(&data[2], (uint16_t)lroundf(max_speed_dps));
         LKMotor_WriteU32(&data[4], (uint32_t)setpoint);
         break;
+    }
     default:
         return;
     }
     LKMotor_SendFrame(motor, data);
+    if (command->control_mode == MODE_POSITION)
+    {
+        LKMotor_SchedulePositionFeedback(motor);
+    }
 }
 
 void LKMotor_RequestFeedback(LKMotor_t *motor)
 {
+    if (motor->base.motorcmd.control_mode == MODE_POSITION)
+    {
+        LKMotor_SchedulePositionFeedback(motor);
+        return;
+    }
+
     uint8_t data[8] = {0};
     data[0] = LK_CMD_READ_MULTI_ANGLE;
     LKMotor_SendFrame(motor, data);
@@ -201,10 +311,11 @@ void LKMotor_RequestFeedback(LKMotor_t *motor)
 
 void LKMotor_Feedback(LKMotor_t *motor, const uint8_t data[8], uint16_t rec_id)
 {
-    if (rec_id != motor->motor_config.feedback_id)
+    if (rec_id != motor->base.feedback_id)
     {
         return;
     }
+    motor->last_feedback_id = rec_id;
 
     Feedback_t *feedback = &motor->base.feedback;
     switch (data[0])
@@ -243,8 +354,19 @@ void LKMotor_Feedback(LKMotor_t *motor, const uint8_t data[8], uint16_t rec_id)
         }
         else
         {
-            feedback->status = data[6] == LK_MOTOR_OFF_STATE ?
-                               MOTOR_DISABLED : MOTOR_ENABLED;
+            if (data[6] == LK_MOTOR_OFF_STATE)
+            {
+                feedback->status = MOTOR_DISABLED;
+            }
+            else if (motor->base.motorcmd.control_mode == MODE_POSITION &&
+                     motor->base.feedback_angle_valid == 0U)
+            {
+                feedback->status = MOTOR_NO_FEEDBACK;
+            }
+            else
+            {
+                feedback->status = MOTOR_ENABLED;
+            }
         }
         break;
     case LK_CMD_READ_STATE:
@@ -253,8 +375,8 @@ void LKMotor_Feedback(LKMotor_t *motor, const uint8_t data[8], uint16_t rec_id)
     case LK_CMD_POSITION_CONTROL:
     case LK_CMD_POSITION_LIMITED:
     {
-        int16_t iq = (int16_t)LKMotor_ReadU16(&data[2]);
-        int16_t speed = (int16_t)LKMotor_ReadU16(&data[4]);
+        int16_t iq = LKMotor_ReadS16(&data[2]);
+        int16_t speed = LKMotor_ReadS16(&data[4]);
         uint16_t encoder = LKMotor_ReadU16(&data[6]);
         float speed_dps = (float)speed * LK_SPEED_DPS_PER_LSB;
         feedback->current = (float)iq * lkModelParams[motor->motor_config.model].current_per_lsb;
@@ -262,13 +384,17 @@ void LKMotor_Feedback(LKMotor_t *motor, const uint8_t data[8], uint16_t rec_id)
         feedback->velocity_rpm = speed_dps * LK_DPS_TO_RPM;
         feedback->omega_rads = speed_dps * MOTOR_DEG_TO_RAD;
         feedback->encoder = encoder;
-        /* 16 位差值按有符号解释即落在 [-32768, 32767] */
-        Motor_UpdateFeedbackAngle(
-            &motor->base,
-            (float)(int16_t)(uint16_t)(encoder - motor->base.zero_point) *
-            MOTOR_TWO_PI / (float)LK_ENCODER_COUNTS);
+        if (motor->base.motorcmd.control_mode != MODE_POSITION)
+        {
+            /* 16 位差值按有符号解释即落在 [-32768, 32767] */
+            Motor_UpdateFeedbackAngle(
+                &motor->base,
+                (float)(int16_t)(uint16_t)(encoder - motor->base.zero_point) *
+                MOTOR_TWO_PI / (float)LK_ENCODER_COUNTS);
+        }
         feedback->temp = (float)(int8_t)data[1];
-        if (feedback->status == MOTOR_NO_FEEDBACK)
+        if (motor->base.motorcmd.control_mode != MODE_POSITION &&
+            feedback->status == MOTOR_NO_FEEDBACK)
         {
             feedback->status = MOTOR_ENABLED;
         }
@@ -285,7 +411,15 @@ void LKMotor_Feedback(LKMotor_t *motor, const uint8_t data[8], uint16_t rec_id)
         {
             raw |= 0xFF00000000000000ULL;
         }
-        int64_t single_turn_raw = (int64_t)raw % LK_ANGLE_LSB_PER_TURN;
+        const int64_t angle_raw = (int64_t)raw;
+
+        if (motor->base.motorcmd.control_mode == MODE_POSITION)
+        {
+            LKMotor_UpdateAbsoluteFeedback(motor, angle_raw);
+            break;
+        }
+
+        int64_t single_turn_raw = angle_raw % LK_ANGLE_LSB_PER_TURN;
         if (single_turn_raw < 0)
         {
             single_turn_raw += LK_ANGLE_LSB_PER_TURN;
@@ -303,16 +437,19 @@ void LKMotor_Feedback(LKMotor_t *motor, const uint8_t data[8], uint16_t rec_id)
     }
     case LK_CMD_READ_SINGLE_ANGLE:
     {
-        uint32_t angle = (uint32_t)data[4] | ((uint32_t)data[5] << 8) |
-                         ((uint32_t)data[6] << 16) | ((uint32_t)data[7] << 24);
-        Motor_UpdateFeedbackAngle(
-            &motor->base,
-            (float)angle * LK_ANGLE_DEGREE_PER_LSB * MOTOR_DEG_TO_RAD -
-            (float)motor->base.zero_point * MOTOR_TWO_PI /
-            (float)LK_ENCODER_COUNTS);
-        if (feedback->status == MOTOR_NO_FEEDBACK)
+        if (motor->base.motorcmd.control_mode != MODE_POSITION)
         {
-            feedback->status = MOTOR_ENABLED;
+            uint32_t angle = (uint32_t)data[4] | ((uint32_t)data[5] << 8) |
+                             ((uint32_t)data[6] << 16) | ((uint32_t)data[7] << 24);
+            Motor_UpdateFeedbackAngle(
+                &motor->base,
+                (float)angle * LK_ANGLE_DEGREE_PER_LSB * MOTOR_DEG_TO_RAD -
+                (float)motor->base.zero_point * MOTOR_TWO_PI /
+                (float)LK_ENCODER_COUNTS);
+            if (feedback->status == MOTOR_NO_FEEDBACK)
+            {
+                feedback->status = MOTOR_ENABLED;
+            }
         }
         break;
     }

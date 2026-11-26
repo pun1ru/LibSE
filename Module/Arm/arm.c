@@ -9,12 +9,10 @@
 /* 重力算法按 ARM_GRAVITY_DOF 个关节写死维度，两处必须一致 */
 _Static_assert(ARM_GRAVITY_DOF == ARM_JOINT_COUNT, "arm_dynamics.h 的关节数必须等于 ARM_JOINT_COUNT");
 
-#define ARM_ENABLE_RESEND_DIV   200U    /* 使能态下使能帧重发间隔（Arm_Run 调用次数），防止首帧丢失 */
-
 #define ARM_STATE_BIT(state)    (1U << (state))
 #define ARM_MASTER_STATE_MASK   (ARM_STATE_BIT(ARM_PROTECTED) | ARM_STATE_BIT(ARM_ENABLE) | \
                                  ARM_STATE_BIT(ARM_FEEDBACK) | ARM_STATE_BIT(ARM_MASTER) | \
-                                 ARM_STATE_BIT(ARM_HOST))
+                                 ARM_STATE_BIT(ARM_HOST) | ARM_STATE_BIT(ARM_TEST))
 #define ARM_SERVANT_STATE_MASK  (ARM_STATE_BIT(ARM_PROTECTED) | ARM_STATE_BIT(ARM_ENABLE) | \
                                  ARM_STATE_BIT(ARM_AUTO) | ARM_STATE_BIT(ARM_SERVANT) | \
                                  ARM_STATE_BIT(ARM_HOST))
@@ -37,6 +35,7 @@ void Arm_Init(Arm_t *arm, const ArmConfig_t *config)
     /* 无论初始状态是不是使能态，第一次进使能都要先对齐目标、清 PID */
     arm->host.ctrl_align_pending = 1U;
     arm->host.host_align_pending = config->state.init_state == ARM_HOST ? 1U : 0U;
+    arm->test.align_pending = config->state.init_state == ARM_TEST ? 1U : 0U;
 
     for (uint8_t i = 0U; i < ARM_JOINT_COUNT; ++i)
     {
@@ -66,11 +65,16 @@ bool Arm_SetState(Arm_t *arm, ArmState_t state)
     if (state != arm->state)
     {
         arm->state = state;
-        /* 进入新状态后第一个周期就发使能帧 */
-        arm->host.enable_divider = 0U;
         /* 进使能态不能沿用上一个状态的目标和积分，下个周期先对齐观测 */
         arm->host.ctrl_align_pending = 1U;
         arm->host.host_align_pending = state == ARM_HOST ? 1U : 0U;
+        arm->test.align_pending = state == ARM_TEST ? 1U : 0U;
+        if (state == ARM_TEST)
+        {
+            arm->test.selected_joint = 0U;
+            /* Do not change joint until CH4 is released after entering this state. */
+            arm->test.ch4_switch_armed = 0U;
+        }
 
         /* 离开 HOST 或重新进入 HOST 都从零闭环、零有效目标开始，数值逆解也一并退出 */
         arm->host.host_closed_loop_mask = 0U;
@@ -82,6 +86,11 @@ bool Arm_SetState(Arm_t *arm, ArmState_t state)
         {
             Arm_SendDisableCommand(arm);
         }
+        else if (previous_state == ARM_PROTECTED && state != ARM_PROTECTED)
+        {
+            /* Run once on the protection-exit edge; never resend periodically. */
+            Arm_SendEnableCommand(arm);
+        }
     }
     return true;
 }
@@ -92,6 +101,17 @@ void Arm_SetRcOnline(Arm_t *arm, bool online)
     {
         arm->host.rc_online = online ? 1U : 0U;
     }
+}
+
+void Arm_SetTestInput(Arm_t *arm, int16_t ch1, int16_t ch4)
+{
+    if (arm == NULL)
+    {
+        return;
+    }
+
+    arm->test.ch1 = ch1;
+    arm->test.ch4 = ch4;
 }
 
 ArmHostTargetResult_t Arm_SetHostTarget(Arm_t *arm, uint8_t joint, float target_deg,
@@ -224,17 +244,6 @@ void Arm_Run(Arm_t *arm)
     Arm_GravityUpdate(arm);
 
     /*--------------------------------------控制与通信--------------------------------------*/
-    /* 使能帧重发与目标来源解耦：ENABLE/HOST 都保持原来的周期重发节奏 */
-    if (arm->state == ARM_ENABLE || arm->state == ARM_HOST)
-    {
-        if (arm->host.enable_divider == 0U)
-        {
-            Arm_SendEnableCommand(arm);
-            arm->host.enable_divider = ARM_ENABLE_RESEND_DIV;
-        }
-        --arm->host.enable_divider;
-    }
-
     Arm_UpdateTarget(arm);
     Arm_JointControl(arm);
 }

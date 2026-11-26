@@ -42,8 +42,16 @@ typedef enum {
     ARM_MASTER,         /* 主机：主机正常工作 */
     ARM_AUTO,           /* 从机：从机自主运行 */
     ARM_SERVANT,        /* 从机：跟随主机 */
-    ARM_HOST            /* 主从共有：上位机设定角度目标，是否闭环由上位机决定 */
+    ARM_HOST,           /* 主从共有：上位机设定角度目标，是否闭环由上位机决定 */
+    ARM_TEST = 8        /* 主机：遥控器关节角度测试；7 保留给 Host 的 HOST_IK */
 } ArmState_t;
+
+/* ARM_TEST 下 CH1 的增量步长按 2 ms 控制周期换算，满杆约 10 deg/s。
+ * CH4 使用回差边沿，拨过阈值只切一次，回中后才允许再次切换。 */
+#define ARM_TEST_CH1_DEADBAND             20
+#define ARM_TEST_TARGET_MAX_STEP_DEG      0.02f
+#define ARM_TEST_CH4_SWITCH_THRESHOLD     500
+#define ARM_TEST_CH4_RELEASE_THRESHOLD    300
 
 typedef enum {
     ARM_HOST_TARGET_OK = 0,
@@ -190,7 +198,6 @@ typedef struct {
 
 /* 使能与 HOST 控制状态 */
 typedef struct {
-    uint16_t enable_divider;    /* 使能帧重发倒计时，0 表示本周期发 */
     uint8_t ctrl_align_pending; /* 进入非保护态后第一次控制前，把目标对齐观测并清 PID */
     uint8_t host_align_pending; /* 进入 HOST 后第一次控制前，锁存限位并把目标对齐观测 */
     uint8_t host_closed_loop_mask;  /* bit i=1：关节 i 追 HOST 目标；0 位输出零力矩 */
@@ -200,6 +207,14 @@ typedef struct {
 } ArmHost_t;
 
 typedef struct {
+    uint8_t align_pending;          /* First ARM_TEST cycle aligns targets to feedback. */
+    uint8_t selected_joint;         /* Joint controlled by CH1. */
+    uint8_t ch4_switch_armed;       /* Re-armed after CH4 returns below release threshold. */
+    int16_t ch1;
+    int16_t ch4;
+} ArmTest_t;
+
+typedef struct {
     ArmConfig_t config;
     ArmState_t state;
     ArmIkType_t ik_type;
@@ -207,6 +222,7 @@ typedef struct {
     ArmJointCtrl_t joint_ctrl[ARM_JOINT_COUNT];
     ArmGravityState_t gravity;
     ArmHost_t host;
+    ArmTest_t test;
     ArmIkState_t ik;
 } Arm_t;
 
@@ -216,6 +232,8 @@ void Arm_Run(Arm_t *arm);
 bool Arm_SetState(Arm_t *arm, ArmState_t state);
 /* Cache the receiver freshness for protocol status reporting. */
 void Arm_SetRcOnline(Arm_t *arm, bool online);
+/* Cache ARM_TEST RC inputs before Arm_Run; target update only consumes these values. */
+void Arm_SetTestInput(Arm_t *arm, int16_t ch1, int16_t ch4);
 
 /* HOST 单关节目标：joint 为 0..ARM_JOINT_COUNT-1。multi_turn=true 时 target_deg 为多圈角，
  * 必须落在进入 HOST 时锁存的多圈限位内；false 时按旧协议解释为单圈绝对角并映射到当前圈。

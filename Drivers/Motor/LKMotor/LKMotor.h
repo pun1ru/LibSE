@@ -51,8 +51,8 @@ typedef enum {
 typedef struct {
     LKMotorModel_t model;
     uint8_t motor_id;
-    uint16_t feedback_id;
-    uint16_t zero_point;
+    uint16_t feedback_id;           /* Configured for compatibility; driver uses 0x140 + motor_id. */
+    uint16_t zero_point;            /* 16-bit encoder zero; mapped to 0.01 deg for 0x92. */
     bool inverse;
     ControlMode_t control_mode;
 } LKMotorConfig_t;
@@ -60,6 +60,9 @@ typedef struct {
 typedef struct {
     Motor_t base;
     LKMotorConfig_t motor_config;
+    int64_t zero_angle_raw;         /* Mechanical zero in the 0x92 native angle frame. */
+    uint32_t position_poll_counter;
+    uint16_t last_feedback_id;
 } LKMotor_t;
 
 void LKMotor_Init(LKMotor_t *motor, FDCAN_HandleTypeDef *can,

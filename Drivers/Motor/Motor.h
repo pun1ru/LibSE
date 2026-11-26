@@ -88,6 +88,7 @@ struct Motor_t{
     int32_t multi_turn_count;           // 软件累计圈数
     float last_abs_angle_rad;           // 上一次零点化单圈角，用于跨圈判断
     uint32_t last_feedback_ms;          // 最近一次有效角度反馈时间
+    uint32_t last_feedback_timestamp;   // 上次观察到的 feedback.timestamp
     uint8_t feedback_angle_valid;       // 是否已有可用于跨圈判断的角度
 };
 

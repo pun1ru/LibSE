@@ -6,6 +6,9 @@
 #include "algorism.h"
 #include "arm_ik.h"
 
+_Static_assert(ARM_TEST_CH4_RELEASE_THRESHOLD < ARM_TEST_CH4_SWITCH_THRESHOLD,
+               "ARM_TEST CH4 release threshold must be below its switch threshold");
+
 static void Arm_UpdateMultiTurnLimit(const Arm_t *arm, uint8_t joint,
                                      ArmJointCtrl_t *ctrl)
 {
@@ -89,9 +92,61 @@ void Arm_TrackJointTarget(Arm_t *arm)
     }
 }
 
+static void Arm_UpdateTestTarget(Arm_t *arm)
+{
+    ArmTest_t *test = &arm->test;
+    const int16_t ch1 = test->ch1;
+
+    if (test->selected_joint >= ARM_JOINT_COUNT)
+    {
+        test->selected_joint = 0U;
+    }
+
+    /* CH4 is an edge selector. It cycles once per throw and must return to
+     * the release band before another joint can be selected. */
+    if (test->ch4 > ARM_TEST_CH4_SWITCH_THRESHOLD)
+    {
+        if (test->ch4_switch_armed != 0U)
+        {
+            test->selected_joint = (uint8_t)((test->selected_joint + 1U) % ARM_JOINT_COUNT);
+            test->ch4_switch_armed = 0U;
+        }
+    }
+    else if (test->ch4 < ARM_TEST_CH4_RELEASE_THRESHOLD)
+    {
+        test->ch4_switch_armed = 1U;
+    }
+
+    if (ch1 > ARM_TEST_CH1_DEADBAND)
+    {
+        ArmJointCtrl_t *ctrl = &arm->joint_ctrl[test->selected_joint];
+
+        ctrl->target_deg += ((float)(ch1 - ARM_TEST_CH1_DEADBAND) /
+                             (660.0f - (float)ARM_TEST_CH1_DEADBAND)) *
+                            ARM_TEST_TARGET_MAX_STEP_DEG;
+    }
+    else if (ch1 < -ARM_TEST_CH1_DEADBAND)
+    {
+        ArmJointCtrl_t *ctrl = &arm->joint_ctrl[test->selected_joint];
+
+        ctrl->target_deg += ((float)(ch1 + ARM_TEST_CH1_DEADBAND) /
+                             (660.0f - (float)ARM_TEST_CH1_DEADBAND)) *
+                            ARM_TEST_TARGET_MAX_STEP_DEG;
+    }
+
+    {
+        ArmJointCtrl_t *ctrl = &arm->joint_ctrl[test->selected_joint];
+
+        ctrl->target_deg = DoubleEdgeLimiter(ctrl->target_deg,
+                                             ctrl->limit_min_deg,
+                                             ctrl->limit_max_deg);
+    }
+}
+
 /* 按状态选择目标来源，限位也在这里收口：
  *   ENABLE：首次进入锁存限位、对齐观测并清 PID，之后目标持续跟随观测并被限位截断
  *   HOST：首次进入锁存限位、对齐观测并清 PID，之后目标来自上位机并被限位截断
+ *   TEST：首次进入锁存限位并对齐观测，之后 CH1 增量调整选中关节，CH4 循环切换关节
  *   其他：目标跟随观测
  * 限位不在运行中重算，避免实际角跨圈后整个允许区间跟着跳到下一圈 */
 void Arm_UpdateTarget(Arm_t *arm)
@@ -132,6 +187,25 @@ void Arm_UpdateTarget(Arm_t *arm)
         }
         break;
 
+    case ARM_TEST:
+        if (arm->test.align_pending != 0U)
+        {
+            Arm_AlignJointTarget(arm);
+            arm->test.align_pending = 0U;
+            arm->host.ctrl_align_pending = 0U;
+            break;
+        }
+        Arm_UpdateTestTarget(arm);
+        for (uint8_t i = 0U; i < ARM_JOINT_COUNT; ++i)
+        {
+            ArmJointCtrl_t *ctrl = &arm->joint_ctrl[i];
+
+            ctrl->target_deg = DoubleEdgeLimiter(ctrl->target_deg,
+                                                 ctrl->limit_min_deg,
+                                                 ctrl->limit_max_deg);
+        }
+        break;
+
     default:
         Arm_TrackJointTarget(arm);
         break;
@@ -139,14 +213,15 @@ void Arm_UpdateTarget(Arm_t *arm)
 }
 
 /* 统一关节角度环：内部按状态选择闭环关节，不再区分普通控制和 HOST 控制
- *   ENABLE：全部关节 PID + 重力前馈
- *   HOST：host.host_closed_loop_mask 为 1 的关节 PID + 重力前馈；其余关节 PID 清零，只保留重力前馈
+ *   ENABLE：力矩轴 PID + 重力前馈，位置轴直接使用关节目标
+ *   HOST：闭环力矩轴 PID + 重力前馈；开环轴只保留重力前馈
+ *   TEST：仅由 CH1 修改当前选中关节目标，各轴按自身控制模式执行
  *   其他：发零指令
  * 目标与限位已由 Arm_UpdateTarget 准备，这里不重复更新目标
  * 误差不做最短路径折叠；控制输出写进各电机并发送 */
 void Arm_JointControl(Arm_t *arm)
 {
-    if (arm->state != ARM_ENABLE && arm->state != ARM_HOST)
+    if (arm->state != ARM_ENABLE && arm->state != ARM_HOST && arm->state != ARM_TEST)
     {
         Arm_SendZeroCommand(arm);
         return;
@@ -155,12 +230,20 @@ void Arm_JointControl(Arm_t *arm)
     for (uint8_t i = 0U; i < ARM_JOINT_COUNT; ++i)
     {
         ArmJointCtrl_t *ctrl = &arm->joint_ctrl[i];
+        Motor_t *motor = arm->config.motor.joint[i];
         const float observed_deg = arm->observer.joint_deg[i];
+        const bool position_mode = motor->motorcmd.control_mode == MODE_POSITION;
         const bool closed_loop =
-            (arm->state == ARM_ENABLE) ||
+            (arm->state == ARM_ENABLE) || (arm->state == ARM_TEST) ||
             ((arm->host.host_closed_loop_mask & (uint8_t)(1U << i)) != 0U);
 
-        if (closed_loop)
+        if (position_mode)
+        {
+            /* The LK driver owns the position loop; do not stack the Arm PID on it. */
+            ctrl->output = 0.0f;
+            PIDReset(&ctrl->pid);
+        }
+        else if (closed_loop)
         {
             ctrl->output = PIDUpdate(&ctrl->pid, ctrl->target_deg - observed_deg);
         }
@@ -170,17 +253,25 @@ void Arm_JointControl(Arm_t *arm)
             PIDReset(&ctrl->pid);
         }
 #if ARM_GRAVITY_OUTPUT
-        ctrl->output = Arm_AddGravity(arm, i, ctrl->output);
+        if (!position_mode)
+        {
+            ctrl->output = Arm_AddGravity(arm, i, ctrl->output);
+        }
 #endif
-        ctrl->output = Arm_LimitTotalTorque(arm, i, ctrl->output);
+        if (!position_mode)
+        {
+            ctrl->output = Arm_LimitTotalTorque(arm, i, ctrl->output);
+        }
     }
     Arm_SendJointCommand(arm);
 }
 
 /*--------------------------------------通信--------------------------------------*/
-/* 按电机当前控制模式把力矩写到对应字段，不整体清零：位置、速度等字段保持驱动初始化后的值 */
-static void Arm_WriteJointCommand(Motor_t *motor, float torque_nm)
+/* 按电机当前控制模式把关节目标和力矩写到对应字段，不整体清零。 */
+static void Arm_WriteJointCommand(const Arm_t *arm, uint8_t joint, bool active)
 {
+    Motor_t *motor = arm->config.motor.joint[joint];
+
     if (motor == NULL)
     {
         return;
@@ -189,18 +280,28 @@ static void Arm_WriteJointCommand(Motor_t *motor, float torque_nm)
     MotorCmd_t *cmd = &motor->motorcmd;
     switch (cmd->control_mode)
     {
+    case MODE_POSITION:
+        if (active)
+        {
+            const float direction =
+                arm->config.param.direction[joint] < 0 ? -1.0f : 1.0f;
+
+            cmd->position = direction * arm->joint_ctrl[joint].target_deg *
+                            MOTOR_DEG_TO_RAD;
+        }
+        break;
     case MODE_MIT:
         cmd->position = 0.0f;
         cmd->velocity = 0.0f;
         cmd->kp = 0.0f;
         cmd->kd = 0.0f;
-        cmd->torque = torque_nm;
+        cmd->torque = arm->joint_ctrl[joint].output;
         break;
     case MODE_TORQUE:
-        cmd->torque = torque_nm;
+        cmd->torque = arm->joint_ctrl[joint].output;
         break;
     case MODE_CURRENT:
-        cmd->current = torque_nm;
+        cmd->current = arm->joint_ctrl[joint].output;
         break;
     default:
         break;
@@ -212,6 +313,16 @@ void Arm_SendZeroCommand(Arm_t *arm)
     for (uint8_t i = 0U; i < ARM_JOINT_COUNT; ++i)
     {
         Motor_t *motor = arm->config.motor.joint[i];
+        if (motor->motorcmd.control_mode == MODE_POSITION)
+        {
+            /* Do not stream 0x81 in protection: it causes LK nodes to stop
+             * answering 0x92 between Stop and Run. */
+            if (motor->motorops.requestfeedback != NULL)
+            {
+                motor->motorops.requestfeedback(motor);
+            }
+            continue;
+        }
         /* 指令整体清零，只保留初始化时定下的控制模式 */
         ControlMode_t mode = motor->motorcmd.control_mode;
 
@@ -226,7 +337,12 @@ void Arm_SendJointCommand(Arm_t *arm)
     /* 先写完所有关节再统一发送：同一 RM 电机组的关节共用一帧，边走边发会带出旧值 */
     for (uint8_t i = 0U; i < ARM_JOINT_COUNT; ++i)
     {
-        Arm_WriteJointCommand(arm->config.motor.joint[i], arm->joint_ctrl[i].output);
+        const bool active =
+            arm->state == ARM_ENABLE || arm->state == ARM_TEST ||
+            (arm->state == ARM_HOST &&
+             (arm->host.host_closed_loop_mask & (uint8_t)(1U << i)) != 0U);
+
+        Arm_WriteJointCommand(arm, i, active);
     }
     for (uint8_t i = 0U; i < ARM_JOINT_COUNT; ++i)
     {

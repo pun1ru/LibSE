@@ -7,11 +7,9 @@
 void Motor_UpdateFeedbackAngle(Motor_t *motor, float angle_rad)
 {
     Feedback_t *feedback = &motor->feedback;
-    uint32_t now_ms = HAL_GetTick();
     float abs_angle_rad = AngleLimit(angle_rad, -MOTOR_PI, MOTOR_PI);
 
-    if (motor->feedback_angle_valid == 0U ||
-        (uint32_t)(now_ms - motor->last_feedback_ms) > MOTOR_FEEDBACK_TIMEOUT_MS)
+    if (motor->feedback_angle_valid == 0U)
     {
         motor->multi_turn_count = 0;
     }
@@ -30,7 +28,6 @@ void Motor_UpdateFeedbackAngle(Motor_t *motor, float angle_rad)
     }
 
     motor->last_abs_angle_rad = abs_angle_rad;
-    motor->last_feedback_ms = now_ms;
     motor->feedback_angle_valid = 1U;
     feedback->abs_angle_rad = abs_angle_rad;
     feedback->abs_angle_deg = abs_angle_rad * MOTOR_RAD_TO_DEG;
@@ -45,13 +42,17 @@ void Motor_UpdateFeedbackStatus(Motor_t *motor)
     uint32_t now_ms = HAL_GetTick();
 
     taskENTER_CRITICAL();
-    if (motor->feedback_angle_valid != 0U &&
-        (uint32_t)(now_ms - motor->last_feedback_ms) > MOTOR_FEEDBACK_TIMEOUT_MS)
+    if (motor->feedback.timestamp != motor->last_feedback_timestamp)
+    {
+        motor->last_feedback_timestamp = motor->feedback.timestamp;
+        motor->last_feedback_ms = now_ms;
+        motor->feedback_angle_valid = 1U;
+    }
+    else if (motor->feedback_angle_valid != 0U &&
+             (uint32_t)(now_ms - motor->last_feedback_ms) >
+             MOTOR_FEEDBACK_TIMEOUT_MS)
     {
         motor->feedback_angle_valid = 0U;
-        motor->multi_turn_count = 0;
-        motor->feedback.multi_angle_rad = motor->feedback.abs_angle_rad;
-        motor->feedback.multi_angle_deg = motor->feedback.abs_angle_deg;
         motor->feedback.status = MOTOR_NO_FEEDBACK;
     }
     taskEXIT_CRITICAL();
