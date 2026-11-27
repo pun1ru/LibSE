@@ -10,7 +10,11 @@ bool Arm_CalibrateZero(Arm_t *arm);
 void Arm_UpdateJointAngle(Arm_t *arm);
 /* 关节角 -> 末端到基座的齐次变换，DH 正运动学 */
 void Arm_ForwardKinematics(Arm_t *arm);
-/* 末端到基座的变换 -> 三维坐标与欧拉角 */
+/* DH 末端/TCP 到基座的变换 -> 三维坐标与欧拉角 */
 void Arm_ExtractPose(Arm_t *arm);
+/* 将基座系下的 TCP 目标位姿换算为 DH 末端目标位姿，供现有数值 IK 使用。 */
+void Arm_TcpTargetToEnd(const float tcp_target[4][4], float end_target[4][4]);
+/* 将 IK 内部保存的 DH 末端目标换算回 TCP 位姿并提取位置/欧拉角。 */
+bool Arm_GetIkTargetTcpPose(const Arm_t *arm, float position_m[3], float euler_deg[3]);
 
 #endif

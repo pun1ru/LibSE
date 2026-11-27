@@ -135,7 +135,7 @@ ArmIkResult_t Arm_SetNumericIkTarget(Arm_t *arm, const float target[4][4], const
     const float *use_weight;
     bool keep_reference;
 
-    if (arm->state != ARM_HOST)
+    if (arm->state != ARM_HOST && arm->state != ARM_IK)
     {
         return ARM_IK_WRONG_STATE;
     }
@@ -201,7 +201,7 @@ ArmIkResult_t Arm_SetAnalyticIkTarget(Arm_t *arm, const float target[4][4],
     if (arm == NULL || target == NULL) {
         return ARM_IK_BAD_PARAM;
     }
-    if (arm->state != ARM_HOST) {
+    if (arm->state != ARM_HOST && arm->state != ARM_IK) {
         return ARM_IK_WRONG_STATE;
     }
     if (branch == NULL || !branch->valid) {
@@ -296,7 +296,8 @@ void Arm_StepNumericIk(Arm_t *arm)
     float limit_max[ARM_JOINT_COUNT];
     float peak_deg = 0.0f;
 
-    if (ik->active == 0U || arm->state != ARM_HOST)
+    if (ik->active == 0U ||
+        (arm->state != ARM_HOST && arm->state != ARM_IK))
     {
         return;
     }

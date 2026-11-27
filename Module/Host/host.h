@@ -27,6 +27,7 @@
 #define HOST_MSG_DEVICE_INFO        0x03U
 #define HOST_MSG_ACK                0x04U
 #define HOST_MSG_JOINT_STATE        0x10U
+#define HOST_MSG_ARM_POSTURE        0x13U
 #define HOST_MSG_SET_HOST_TARGET    0x23U
 #define HOST_MSG_PARAM_READ         0x28U
 #define HOST_MSG_PARAM_VALUE        0x2AU
@@ -35,6 +36,7 @@
 #define HOST_JOINT_STATE_HEAD_SIZE  12U
 #define HOST_JOINT_STATE_SIZE       (HOST_JOINT_STATE_HEAD_SIZE + ARM_JOINT_COUNT * HOST_JOINT_RECORD_SIZE)
 #define HOST_JOINT_STATE_FRAME_SIZE (HOST_FRAME_OVERHEAD + HOST_JOINT_STATE_SIZE)
+#define HOST_ARM_POSTURE_SIZE       72U
 
 #define HOST_ACK_SIZE               8U
 #define HOST_PARAM_VALUE_SIZE       12U
@@ -139,6 +141,8 @@ typedef struct {
     HostResponse_t responses[HOST_TX_QUEUE_SIZE];
     HostReplyCache_t replies[HOST_REPLY_CACHE_SIZE];
     uint8_t joint_payload[HOST_JOINT_STATE_SIZE];
+    uint8_t posture_pending;
+    uint8_t posture_payload[HOST_ARM_POSTURE_SIZE];
     uint8_t frame[HOST_FRAME_MAX_SIZE];
 } Host_t;
 

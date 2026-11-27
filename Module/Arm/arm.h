@@ -16,7 +16,7 @@
  * 每个控制周期调用 Arm_Run，内部依次：观测 -> 控制 -> 通信
  * 电机在 App 层的 motor_init 里创建，反馈帧在 Arm_Init 里绑到各自的 CAN 实例
  * 模块只定义类型和算法，DH 表、零点、角色这些具体值全部由 System 层的 module_init 在配置里给出
- * 主从角色在初始化前由配置定下，之后不再修改：主机状态 PROTECTED/ENABLE/FEEDBACK/MASTER/HOST，从机状态 PROTECTED/ENABLE/AUTO/SERVANT/HOST
+ * 主从角色在初始化前由配置定下，之后不再修改；IK/TEST 为两种角色都可用的遥控测试状态。
  */
 #define ARM_JOINT_COUNT   7U
 #define ARM_VECTOR_DIM    3U    /* 位置、欧拉角的分量数 */
@@ -43,7 +43,8 @@ typedef enum {
     ARM_AUTO,           /* 从机：从机自主运行 */
     ARM_SERVANT,        /* 从机：跟随主机 */
     ARM_HOST,           /* 主从共有：上位机设定角度目标，是否闭环由上位机决定 */
-    ARM_TEST = 8        /* 主机：遥控器关节角度测试；7 保留给 Host 的 HOST_IK */
+    ARM_IK,             /* 主从共有：遥控器输入 TCP 六维位姿，数值 IK 更新关节目标 */
+    ARM_TEST = 8        /* 主从共有：遥控器关节角度测试 */
 } ArmState_t;
 
 /* ARM_TEST 下 CH1 的增量步长按 2 ms 控制周期换算，满杆约 10 deg/s。
@@ -52,6 +53,12 @@ typedef enum {
 #define ARM_TEST_TARGET_MAX_STEP_DEG      0.02f
 #define ARM_TEST_CH4_SWITCH_THRESHOLD     500
 #define ARM_TEST_CH4_RELEASE_THRESHOLD    300
+
+/* ARM_IK 遥控器输入：满杆速度 0.05 m/s、5 deg/s，按 2 ms 周期折算为单周期步长。
+ * 定位模式 CH1=x、CH2=y、CH3=z；姿态模式 CH0=roll、CH3=pitch、CH2=yaw。 */
+#define ARM_IK_RC_POS_STEP_M              0.0001f
+#define ARM_IK_RC_ROT_STEP_DEG            0.01f
+#define ARM_IK_RC_PITCH_LIMIT_DEG         89.0f
 
 typedef enum {
     ARM_HOST_TARGET_OK = 0,
@@ -149,9 +156,12 @@ typedef struct {
 typedef struct {
     float joint_deg[ARM_JOINT_COUNT];                   /* 多圈关节角，方向已按 ArmParam_t.direction 折算 */
     float joint_abs_deg[ARM_JOINT_COUNT];               /* 单圈绝对角，用于把绝对限位映射到当前圈 */
-    float end_to_base[4][4];                            /* 末端到基座的齐次变换，DH 正运动学连乘 */
-    float position_m[ARM_VECTOR_DIM];                   /* 末端在基座系下的位置 [x, y, z] */
-    float euler_deg[ARM_VECTOR_DIM];                    /* 末端姿态 [roll, pitch, yaw]，Z-Y-X 顺序，下标见 EULER_ROLL 等 */
+    float end_to_base[4][4];                            /* DH 末端到基座的齐次变换，仅供底层 IK 换算 */
+    float tcp_to_base[4][4];                            /* TCP 到基座的齐次变换：DH 末端沿 z 偏移 -0.045 m */
+    float position_m[ARM_VECTOR_DIM];                   /* TCP 在基座系下的位置 [x, y, z] */
+    float euler_deg[ARM_VECTOR_DIM];                    /* TCP 姿态 [roll, pitch, yaw]，Z-Y-X 顺序 */
+    float tcp_position_m[ARM_VECTOR_DIM];               /* TCP 在基座系下的位置 [x, y, z] */
+    float tcp_euler_deg[ARM_VECTOR_DIM];                /* TCP 姿态 [roll, pitch, yaw]，Z-Y-X 顺序 */
 } ArmObserver_t;
 
 /*--------------------------------------控制层--------------------------------------*/
@@ -215,6 +225,19 @@ typedef struct {
 } ArmTest_t;
 
 typedef struct {
+    uint8_t align_pending;          /* 首次进入 ARM_IK 时用当前 TCP 位姿建立目标 */
+    uint8_t attitude_mode;          /* 0：位置输入；1：姿态输入 */
+    uint8_t ch4_switch_armed;       /* CH4 回中后允许下一次切换 */
+    int16_t ch0;
+    int16_t ch1;
+    int16_t ch2;
+    int16_t ch3;
+    int16_t ch4;
+    float target_position_m[ARM_VECTOR_DIM];
+    float target_euler_deg[ARM_VECTOR_DIM];
+} ArmIkRc_t;
+
+typedef struct {
     ArmConfig_t config;
     ArmState_t state;
     ArmIkType_t ik_type;
@@ -223,6 +246,7 @@ typedef struct {
     ArmGravityState_t gravity;
     ArmHost_t host;
     ArmTest_t test;
+    ArmIkRc_t ik_rc;
     ArmIkState_t ik;
 } Arm_t;
 
@@ -234,6 +258,9 @@ bool Arm_SetState(Arm_t *arm, ArmState_t state);
 void Arm_SetRcOnline(Arm_t *arm, bool online);
 /* Cache ARM_TEST RC inputs before Arm_Run; target update only consumes these values. */
 void Arm_SetTestInput(Arm_t *arm, int16_t ch1, int16_t ch4);
+/* Cache all DT7 channels once per control period for ARM_TEST and ARM_IK. */
+void Arm_SetRcInput(Arm_t *arm, int16_t ch0, int16_t ch1, int16_t ch2,
+                    int16_t ch3, int16_t ch4);
 
 /* HOST 单关节目标：joint 为 0..ARM_JOINT_COUNT-1。multi_turn=true 时 target_deg 为多圈角，
  * 必须落在进入 HOST 时锁存的多圈限位内；false 时按旧协议解释为单圈绝对角并映射到当前圈。

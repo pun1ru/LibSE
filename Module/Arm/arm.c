@@ -12,10 +12,12 @@ _Static_assert(ARM_GRAVITY_DOF == ARM_JOINT_COUNT, "arm_dynamics.h 的关节数�
 #define ARM_STATE_BIT(state)    (1U << (state))
 #define ARM_MASTER_STATE_MASK   (ARM_STATE_BIT(ARM_PROTECTED) | ARM_STATE_BIT(ARM_ENABLE) | \
                                  ARM_STATE_BIT(ARM_FEEDBACK) | ARM_STATE_BIT(ARM_MASTER) | \
-                                 ARM_STATE_BIT(ARM_HOST) | ARM_STATE_BIT(ARM_TEST))
+                                 ARM_STATE_BIT(ARM_HOST) | ARM_STATE_BIT(ARM_IK) | \
+                                 ARM_STATE_BIT(ARM_TEST))
 #define ARM_SERVANT_STATE_MASK  (ARM_STATE_BIT(ARM_PROTECTED) | ARM_STATE_BIT(ARM_ENABLE) | \
                                  ARM_STATE_BIT(ARM_AUTO) | ARM_STATE_BIT(ARM_SERVANT) | \
-                                 ARM_STATE_BIT(ARM_HOST))
+                                 ARM_STATE_BIT(ARM_HOST) | ARM_STATE_BIT(ARM_IK) | \
+                                 ARM_STATE_BIT(ARM_TEST))
 
 /* 目标状态是否属于本机角色的状态集 */
 static bool Arm_StateAllowed(const Arm_t *arm, ArmState_t state)
@@ -36,6 +38,7 @@ void Arm_Init(Arm_t *arm, const ArmConfig_t *config)
     arm->host.ctrl_align_pending = 1U;
     arm->host.host_align_pending = config->state.init_state == ARM_HOST ? 1U : 0U;
     arm->test.align_pending = config->state.init_state == ARM_TEST ? 1U : 0U;
+    arm->ik_rc.align_pending = config->state.init_state == ARM_IK ? 1U : 0U;
 
     for (uint8_t i = 0U; i < ARM_JOINT_COUNT; ++i)
     {
@@ -69,14 +72,20 @@ bool Arm_SetState(Arm_t *arm, ArmState_t state)
         arm->host.ctrl_align_pending = 1U;
         arm->host.host_align_pending = state == ARM_HOST ? 1U : 0U;
         arm->test.align_pending = state == ARM_TEST ? 1U : 0U;
+        arm->ik_rc.align_pending = state == ARM_IK ? 1U : 0U;
         if (state == ARM_TEST)
         {
             arm->test.selected_joint = 0U;
             /* Do not change joint until CH4 is released after entering this state. */
             arm->test.ch4_switch_armed = 0U;
         }
+        if (state == ARM_IK)
+        {
+            arm->ik_rc.attitude_mode = 0U;
+            arm->ik_rc.ch4_switch_armed = 0U;
+        }
 
-        /* 离开 HOST 或重新进入 HOST 都从零闭环、零有效目标开始，数值逆解也一并退出 */
+        /* HOST / IK 的每次进出都从零闭环、零有效目标开始，IK 活动状态一并退出 */
         arm->host.host_closed_loop_mask = 0U;
         arm->host.host_target_valid_mask = 0U;
         Arm_StopIk(arm);
@@ -105,6 +114,12 @@ void Arm_SetRcOnline(Arm_t *arm, bool online)
 
 void Arm_SetTestInput(Arm_t *arm, int16_t ch1, int16_t ch4)
 {
+    Arm_SetRcInput(arm, 0, ch1, 0, 0, ch4);
+}
+
+void Arm_SetRcInput(Arm_t *arm, int16_t ch0, int16_t ch1, int16_t ch2,
+                    int16_t ch3, int16_t ch4)
+{
     if (arm == NULL)
     {
         return;
@@ -112,6 +127,11 @@ void Arm_SetTestInput(Arm_t *arm, int16_t ch1, int16_t ch4)
 
     arm->test.ch1 = ch1;
     arm->test.ch4 = ch4;
+    arm->ik_rc.ch0 = ch0;
+    arm->ik_rc.ch1 = ch1;
+    arm->ik_rc.ch2 = ch2;
+    arm->ik_rc.ch3 = ch3;
+    arm->ik_rc.ch4 = ch4;
 }
 
 ArmHostTargetResult_t Arm_SetHostTarget(Arm_t *arm, uint8_t joint, float target_deg,

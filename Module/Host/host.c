@@ -3,6 +3,8 @@
 #include <string.h>
 
 #include "bsp_dwt.h"
+#include "arm_kinematics.h"
+#include "ik_analytic.h"
 
 #define HOST_CRC8_POLY              0x07U
 #define HOST_CRC8_INIT              0x00U
@@ -51,6 +53,33 @@
 #define HOST_REC_OFFSET_TEMP        24U
 #define HOST_REC_OFFSET_FLAGS       25U
 #define HOST_REC_OFFSET_FEEDBACK    26U
+
+#define HOST_POSTURE_OFFSET_BRANCH      0U
+#define HOST_POSTURE_OFFSET_FLAGS       1U
+#define HOST_POSTURE_OFFSET_PLAN_TIME   2U
+#define HOST_POSTURE_OFFSET_PSI         4U
+#define HOST_POSTURE_OFFSET_X           8U
+#define HOST_POSTURE_OFFSET_Y           12U
+#define HOST_POSTURE_OFFSET_Z           16U
+#define HOST_POSTURE_OFFSET_ROLL        20U
+#define HOST_POSTURE_OFFSET_PITCH       24U
+#define HOST_POSTURE_OFFSET_YAW         28U
+#define HOST_POSTURE_OFFSET_PLAN_SEQ    32U
+#define HOST_POSTURE_OFFSET_PLAN_STEPS  36U
+#define HOST_POSTURE_OFFSET_PLAN_INDEX  38U
+#define HOST_POSTURE_OFFSET_PLAN_FAIL   40U
+#define HOST_POSTURE_OFFSET_PLAN_LIMIT  41U
+#define HOST_POSTURE_OFFSET_TARGET_VALID 44U
+#define HOST_POSTURE_OFFSET_TARGET_X    48U
+#define HOST_POSTURE_OFFSET_TARGET_Y    52U
+#define HOST_POSTURE_OFFSET_TARGET_Z    56U
+#define HOST_POSTURE_OFFSET_TARGET_ROLL 60U
+#define HOST_POSTURE_OFFSET_TARGET_PITCH 64U
+#define HOST_POSTURE_OFFSET_TARGET_YAW  68U
+
+#define HOST_POSTURE_FLAG_VALID          0x01U
+#define HOST_POSTURE_FLAG_IK_ACTIVE      0x08U
+#define HOST_POSTURE_FLAG_NUMERIC_IK     0x80U
 
 #define HOST_ACK_RESULT_OK                 0U
 #define HOST_ACK_RESULT_BAD_PARAM          3U
@@ -183,11 +212,13 @@ static void Host_PackJointRecord(const Arm_t *arm, uint8_t joint, uint8_t *out)
     const uint8_t bit = (uint8_t)(1U << joint);
     uint8_t flags = feedback->status != MOTOR_NO_FEEDBACK ? HOST_JOINT_FLAG_ONLINE : 0U;
 
-    if (arm->state == ARM_HOST && (arm->host.host_target_valid_mask & bit) != 0U)
+    if ((arm->state == ARM_HOST || arm->state == ARM_IK) &&
+        (arm->host.host_target_valid_mask & bit) != 0U)
     {
         flags |= HOST_JOINT_FLAG_HOST_TARGET_VALID;
     }
-    if (arm->state == ARM_HOST && (arm->host.host_closed_loop_mask & bit) != 0U)
+    if ((arm->state == ARM_HOST || arm->state == ARM_IK) &&
+        (arm->host.host_closed_loop_mask & bit) != 0U)
     {
         flags |= HOST_JOINT_FLAG_HOST_CLOSED_LOOP;
     }
@@ -224,7 +255,8 @@ static void Host_PackJointState(Host_t *host, uint8_t *payload)
     {
         flags |= HOST_FLAG_CTRL_ALIGNING;
     }
-    if (arm->state == ARM_HOST && arm->host.host_closed_loop_mask != 0U)
+    if ((arm->state == ARM_HOST || arm->state == ARM_IK) &&
+        arm->host.host_closed_loop_mask != 0U)
     {
         flags |= HOST_FLAG_HOST_CLOSED_LOOP;
     }
@@ -245,6 +277,57 @@ static void Host_PackJointState(Host_t *host, uint8_t *payload)
     for (uint8_t i = 0U; i < ARM_JOINT_COUNT; ++i)
     {
         Host_PackJointRecord(arm, i, payload + HOST_JOINT_STATE_HEAD_SIZE + i * HOST_JOINT_RECORD_SIZE);
+    }
+}
+
+static void Host_PackArmPosture(Host_t *host, uint8_t *payload)
+{
+    const Arm_t *arm = host->arm;
+    IkAnalyticBranch_t branch;
+    IkAnalyticSrsParam_t srs;
+    float psi_deg = 0.0f;
+    float target_pos[3] = {0.0f, 0.0f, 0.0f};
+    float target_euler[3] = {0.0f, 0.0f, 0.0f};
+    uint8_t flags = 0U;
+    bool branch_valid = IkAnalytic_ComputeBranch(arm->config.param.dh, arm->observer.joint_deg,
+                                                 &branch);
+    bool psi_valid = branch_valid && IkAnalytic_MakeSrsParam(arm->config.param.dh, &srs) &&
+                     IkAnalytic_ComputeArmAngle(arm->config.param.dh, &srs,
+                                                arm->observer.joint_deg, &psi_deg);
+    bool target_valid = Arm_GetIkTargetTcpPose(arm, target_pos, target_euler);
+
+    memset(payload, 0, HOST_ARM_POSTURE_SIZE);
+    payload[HOST_POSTURE_OFFSET_BRANCH] =
+        branch_valid ? IkAnalytic_BranchIndex(&branch) : 0xFFU;
+    if (psi_valid)
+    {
+        flags |= HOST_POSTURE_FLAG_VALID;
+    }
+    if (arm->ik.active != 0U)
+    {
+        flags |= HOST_POSTURE_FLAG_IK_ACTIVE;
+        if (arm->ik_type == ARM_IK_TYPE_NUMERIC)
+        {
+            flags |= HOST_POSTURE_FLAG_NUMERIC_IK;
+        }
+    }
+    payload[HOST_POSTURE_OFFSET_FLAGS] = flags;
+    Host_PutFloat(payload + HOST_POSTURE_OFFSET_PSI, psi_deg);
+    Host_PutFloat(payload + HOST_POSTURE_OFFSET_X, arm->observer.position_m[0]);
+    Host_PutFloat(payload + HOST_POSTURE_OFFSET_Y, arm->observer.position_m[1]);
+    Host_PutFloat(payload + HOST_POSTURE_OFFSET_Z, arm->observer.position_m[2]);
+    Host_PutFloat(payload + HOST_POSTURE_OFFSET_ROLL, arm->observer.euler_deg[0]);
+    Host_PutFloat(payload + HOST_POSTURE_OFFSET_PITCH, arm->observer.euler_deg[1]);
+    Host_PutFloat(payload + HOST_POSTURE_OFFSET_YAW, arm->observer.euler_deg[2]);
+    payload[HOST_POSTURE_OFFSET_TARGET_VALID] = target_valid ? 1U : 0U;
+    if (target_valid)
+    {
+        Host_PutFloat(payload + HOST_POSTURE_OFFSET_TARGET_X, target_pos[0]);
+        Host_PutFloat(payload + HOST_POSTURE_OFFSET_TARGET_Y, target_pos[1]);
+        Host_PutFloat(payload + HOST_POSTURE_OFFSET_TARGET_Z, target_pos[2]);
+        Host_PutFloat(payload + HOST_POSTURE_OFFSET_TARGET_ROLL, target_euler[0]);
+        Host_PutFloat(payload + HOST_POSTURE_OFFSET_TARGET_PITCH, target_euler[1]);
+        Host_PutFloat(payload + HOST_POSTURE_OFFSET_TARGET_YAW, target_euler[2]);
     }
 }
 
@@ -800,6 +883,23 @@ void Host_Transmit(Host_t *host, UartInstance_t *uart)
         return;
     }
 
+    if (host->posture_pending != 0U)
+    {
+        Host_PackArmPosture(host, host->posture_payload);
+        length = Host_PackPayloadFrame(host, HOST_MSG_ARM_POSTURE, host->posture_payload,
+                                       HOST_ARM_POSTURE_SIZE);
+        if (length != 0U && UART_TransmitDMAEx(uart, host->frame, length) == HAL_OK)
+        {
+            host->posture_pending = 0U;
+            host->sequence++;
+        }
+        else
+        {
+            host->drop_count++;
+        }
+        return;
+    }
+
     if (++host->divider_count < host->config.param.state_divider)
     {
         return;
@@ -811,6 +911,10 @@ void Host_Transmit(Host_t *host, UartInstance_t *uart)
     if (UART_TransmitDMAEx(uart, host->frame, length) != HAL_OK)
     {
         host->drop_count++;
+    }
+    else
+    {
+        host->posture_pending = 1U;
     }
     host->sequence++;
 }

@@ -3,7 +3,7 @@
 
 #include "arm.h"
 
-/* 逆解的 Arm 层接口，算法本体在 ik_numeric.h / ik_analytic.h。只在 ARM_HOST 下有效：
+/* 逆解的 Arm 层接口，算法本体在 ik_numeric.h / ik_analytic.h。在 ARM_HOST / ARM_IK 下有效：
  * NUMERIC 给出末端位姿后每个控制周期推进一步；ANALYTIC 在设置目标时一次求解全部关节。
  * 没到位却几乎不动达到这个周期数时置 ik.stalled（2 ms 周期下 0.5 s） */
 #define ARM_IK_STALL_CYCLES     250U
@@ -11,7 +11,7 @@
 
 typedef enum {
     ARM_IK_OK = 0,
-    ARM_IK_WRONG_STATE,     /* 不在 ARM_HOST */
+    ARM_IK_WRONG_STATE,     /* 不在 ARM_HOST / ARM_IK */
     ARM_IK_BAD_PARAM,       /* 位姿含非有限值、权重非法或参数表没填 */
     ARM_IK_BAD_BRANCH,
     ARM_IK_OUT_OF_REACH,

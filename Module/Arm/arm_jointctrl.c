@@ -1,10 +1,12 @@
 #include "arm_jointctrl.h"
 
+#include <math.h>
 #include <stddef.h>
 #include <string.h>
 
 #include "algorism.h"
 #include "arm_ik.h"
+#include "arm_kinematics.h"
 
 _Static_assert(ARM_TEST_CH4_RELEASE_THRESHOLD < ARM_TEST_CH4_SWITCH_THRESHOLD,
                "ARM_TEST CH4 release threshold must be below its switch threshold");
@@ -143,9 +145,140 @@ static void Arm_UpdateTestTarget(Arm_t *arm)
     }
 }
 
+static float Arm_RcAxis(int16_t channel)
+{
+    int16_t value = channel;
+    const float span = 660.0f - (float)ARM_TEST_CH1_DEADBAND;
+
+    if (value > 660)
+    {
+        value = 660;
+    }
+    else if (value < -660)
+    {
+        value = -660;
+    }
+    if (value > ARM_TEST_CH1_DEADBAND)
+    {
+        return ((float)(value - ARM_TEST_CH1_DEADBAND)) / span;
+    }
+    if (value < -ARM_TEST_CH1_DEADBAND)
+    {
+        return ((float)(value + ARM_TEST_CH1_DEADBAND)) / span;
+    }
+    return 0.0f;
+}
+
+static float Arm_Wrap180Deg(float angle_deg)
+{
+    float wrapped = fmodf(angle_deg + 180.0f, 360.0f);
+
+    if (wrapped < 0.0f)
+    {
+        wrapped += 360.0f;
+    }
+    return wrapped - 180.0f;
+}
+
+static void Arm_BuildRcIkPose(const Arm_t *arm, float target[4][4])
+{
+    const ArmIkRc_t *rc = &arm->ik_rc;
+    const float roll = rc->target_euler_deg[0] * MOTOR_DEG_TO_RAD;
+    const float pitch = rc->target_euler_deg[1] * MOTOR_DEG_TO_RAD;
+    const float yaw = rc->target_euler_deg[2] * MOTOR_DEG_TO_RAD;
+    const float cr = cosf(roll), sr = sinf(roll);
+    const float cp = cosf(pitch), sp = sinf(pitch);
+    const float cy = cosf(yaw), sy = sinf(yaw);
+
+    memset(target, 0, sizeof(float) * 16U);
+    target[0][0] = cy * cp;
+    target[0][1] = cy * sp * sr - sy * cr;
+    target[0][2] = cy * sp * cr + sy * sr;
+    target[1][0] = sy * cp;
+    target[1][1] = sy * sp * sr + cy * cr;
+    target[1][2] = sy * sp * cr - cy * sr;
+    target[2][0] = -sp;
+    target[2][1] = cp * sr;
+    target[2][2] = cp * cr;
+    target[3][3] = 1.0f;
+    target[0][3] = rc->target_position_m[0];
+    target[1][3] = rc->target_position_m[1];
+    target[2][3] = rc->target_position_m[2];
+}
+
+static void Arm_UpdateRcIkTarget(Arm_t *arm)
+{
+    ArmIkRc_t *rc = &arm->ik_rc;
+    float tcp_target[4][4];
+    float end_target[4][4];
+
+    if (rc->ch4 > ARM_TEST_CH4_SWITCH_THRESHOLD)
+    {
+        if (rc->ch4_switch_armed != 0U)
+        {
+            rc->attitude_mode = rc->attitude_mode == 0U ? 1U : 0U;
+            rc->ch4_switch_armed = 0U;
+        }
+    }
+    else if (rc->ch4 < ARM_TEST_CH4_RELEASE_THRESHOLD)
+    {
+        rc->ch4_switch_armed = 1U;
+    }
+
+    if (rc->attitude_mode == 0U)
+    {
+        rc->target_position_m[0] += Arm_RcAxis(rc->ch1) * ARM_IK_RC_POS_STEP_M;
+        rc->target_position_m[1] += Arm_RcAxis(rc->ch2) * ARM_IK_RC_POS_STEP_M;
+        rc->target_position_m[2] += Arm_RcAxis(rc->ch3) * ARM_IK_RC_POS_STEP_M;
+    }
+    else
+    {
+        rc->target_euler_deg[0] =
+            Arm_Wrap180Deg(rc->target_euler_deg[0] +
+                           Arm_RcAxis(rc->ch0) * ARM_IK_RC_ROT_STEP_DEG);
+        rc->target_euler_deg[1] += Arm_RcAxis(rc->ch3) * ARM_IK_RC_ROT_STEP_DEG;
+        if (rc->target_euler_deg[1] > ARM_IK_RC_PITCH_LIMIT_DEG)
+        {
+            rc->target_euler_deg[1] = ARM_IK_RC_PITCH_LIMIT_DEG;
+        }
+        else if (rc->target_euler_deg[1] < -ARM_IK_RC_PITCH_LIMIT_DEG)
+        {
+            rc->target_euler_deg[1] = -ARM_IK_RC_PITCH_LIMIT_DEG;
+        }
+        rc->target_euler_deg[2] =
+            Arm_Wrap180Deg(rc->target_euler_deg[2] +
+                           Arm_RcAxis(rc->ch2) * ARM_IK_RC_ROT_STEP_DEG);
+    }
+
+    Arm_BuildRcIkPose(arm, tcp_target);
+    Arm_TcpTargetToEnd(tcp_target, end_target);
+    memcpy(arm->ik.target, end_target, sizeof(end_target));
+    Arm_StepIk(arm);
+}
+
+static void Arm_InitRcIkTarget(Arm_t *arm)
+{
+    float tcp_target[4][4];
+    float end_target[4][4];
+
+    Arm_AlignJointTarget(arm);
+    arm->host.ctrl_align_pending = 0U;
+    memcpy(arm->ik_rc.target_position_m, arm->observer.tcp_position_m,
+           sizeof(arm->ik_rc.target_position_m));
+    memcpy(arm->ik_rc.target_euler_deg, arm->observer.tcp_euler_deg,
+           sizeof(arm->ik_rc.target_euler_deg));
+    memcpy(tcp_target, arm->observer.tcp_to_base, sizeof(tcp_target));
+    Arm_TcpTargetToEnd(tcp_target, end_target);
+    if (Arm_SetNumericIkTarget(arm, end_target, NULL) == ARM_IK_OK)
+    {
+        arm->ik_rc.align_pending = 0U;
+    }
+}
+
 /* 按状态选择目标来源，限位也在这里收口：
  *   ENABLE：首次进入锁存限位、对齐观测并清 PID，之后目标持续跟随观测并被限位截断
  *   HOST：首次进入锁存限位、对齐观测并清 PID，之后目标来自上位机并被限位截断
+ *   IK：首次进入以当前 TCP 位姿建立目标，之后遥控器六维输入驱动数值 IK
  *   TEST：首次进入锁存限位并对齐观测，之后 CH1 增量调整选中关节，CH4 循环切换关节
  *   其他：目标跟随观测
  * 限位不在运行中重算，避免实际角跨圈后整个允许区间跟着跳到下一圈 */
@@ -176,7 +309,23 @@ void Arm_UpdateTarget(Arm_t *arm)
             arm->host.host_align_pending = 0U;
             arm->host.ctrl_align_pending = 0U;
         }
-        Arm_StepIk(arm);            /* 按配置的 IK 类型处理，再统一过限位 */
+        for (uint8_t i = 0U; i < ARM_JOINT_COUNT; ++i)
+        {
+            ArmJointCtrl_t *ctrl = &arm->joint_ctrl[i];
+
+            ctrl->target_deg = DoubleEdgeLimiter(ctrl->target_deg,
+                                                 ctrl->limit_min_deg,
+                                                 ctrl->limit_max_deg);
+        }
+        break;
+
+    case ARM_IK:
+        if (arm->ik_rc.align_pending != 0U)
+        {
+            Arm_InitRcIkTarget(arm);
+            break;
+        }
+        Arm_UpdateRcIkTarget(arm);
         for (uint8_t i = 0U; i < ARM_JOINT_COUNT; ++i)
         {
             ArmJointCtrl_t *ctrl = &arm->joint_ctrl[i];
@@ -215,13 +364,15 @@ void Arm_UpdateTarget(Arm_t *arm)
 /* 统一关节角度环：内部按状态选择闭环关节，不再区分普通控制和 HOST 控制
  *   ENABLE：力矩轴 PID + 重力前馈，位置轴直接使用关节目标
  *   HOST：闭环力矩轴 PID + 重力前馈；开环轴只保留重力前馈
+ *   IK：7 轴全部闭环，目标由数值 IK 按 TCP 六维输入推进
  *   TEST：仅由 CH1 修改当前选中关节目标，各轴按自身控制模式执行
  *   其他：发零指令
  * 目标与限位已由 Arm_UpdateTarget 准备，这里不重复更新目标
  * 误差不做最短路径折叠；控制输出写进各电机并发送 */
 void Arm_JointControl(Arm_t *arm)
 {
-    if (arm->state != ARM_ENABLE && arm->state != ARM_HOST && arm->state != ARM_TEST)
+    if (arm->state != ARM_ENABLE && arm->state != ARM_HOST &&
+        arm->state != ARM_IK && arm->state != ARM_TEST)
     {
         Arm_SendZeroCommand(arm);
         return;
@@ -234,7 +385,8 @@ void Arm_JointControl(Arm_t *arm)
         const float observed_deg = arm->observer.joint_deg[i];
         const bool position_mode = motor->motorcmd.control_mode == MODE_POSITION;
         const bool closed_loop =
-            (arm->state == ARM_ENABLE) || (arm->state == ARM_TEST) ||
+            (arm->state == ARM_ENABLE) || (arm->state == ARM_IK) ||
+            (arm->state == ARM_TEST) ||
             ((arm->host.host_closed_loop_mask & (uint8_t)(1U << i)) != 0U);
 
         if (position_mode)
@@ -338,7 +490,8 @@ void Arm_SendJointCommand(Arm_t *arm)
     for (uint8_t i = 0U; i < ARM_JOINT_COUNT; ++i)
     {
         const bool active =
-            arm->state == ARM_ENABLE || arm->state == ARM_TEST ||
+            arm->state == ARM_ENABLE || arm->state == ARM_IK ||
+            arm->state == ARM_TEST ||
             (arm->state == ARM_HOST &&
              (arm->host.host_closed_loop_mask & (uint8_t)(1U << i)) != 0U);
 
