@@ -42,6 +42,13 @@ struct MonitorTaskStatus {
     uint32_t offline_count;         /* Consecutive offline evaluations */
     volatile uint32_t last_heartbeat_tick;
     uint8_t online;
+    /* Execution time statistics in CPU cycles (DWT CYCCNT) */
+    uint32_t cycle_start;           /* CYCCNT at Monitor_CycleBegin */
+    uint32_t cycle_last;            /* Last measured duration */
+    uint32_t cycle_min;
+    uint32_t cycle_max;
+    uint32_t cycle_count;           /* Number of measurements since reset */
+    uint64_t cycle_sum;             /* Sum for average: sum / count */
 };
 
 struct MonitorTaskConfig {
@@ -79,6 +86,12 @@ BaseType_t Monitor_Init(Monitor_t *monitor, const MonitorConfig_t *config);
 
 /* Call once after one processing iteration has completed successfully. */
 void Monitor_Heartbeat(MonitorHeartbeat_t heartbeat);
+
+/* Measure one iteration: call Begin at the start and End at the end.
+ * Only use on periodic tasks; blocking waits are counted as run time. */
+void Monitor_CycleBegin(MonitorHeartbeat_t heartbeat);
+void Monitor_CycleEnd(MonitorHeartbeat_t heartbeat);
+void Monitor_CycleReset(MonitorHeartbeat_t heartbeat);
 
 /* The monitor task calls this once every sample period. */
 void Monitor_Collect(Monitor_t *monitor);

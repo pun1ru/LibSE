@@ -99,6 +99,16 @@ static void DWT_CNT_Update(void)
 
     CYCCNT_LAST = cnt_now;
 }
+//读取 CYCCNT 原始值，不改任何静态变量，多任务可同时调用
+uint32_t DWT_GetCycle(void)
+{
+    return DWT->CYCCNT;
+}
+//CPU 周期数转微秒
+float DWT_CycleToUs(uint32_t cycles)
+{
+    return (float)cycles / (float)CPU_FREQ_Hz_us;
+}
 //忙等
 void DWT_Delay(float Delay)
 {

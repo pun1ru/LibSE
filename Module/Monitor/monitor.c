@@ -3,6 +3,8 @@
 #include <stddef.h>
 #include <string.h>
 
+#include "bsp_dwt.h"
+
 #define MONITOR_NOTIFY_CLEAR_ALL    0xFFFFFFFFU
 
 static void Monitor_DispatchEvent(Monitor_t *monitor, uint8_t task_id,
@@ -67,6 +69,58 @@ void Monitor_Heartbeat(MonitorHeartbeat_t heartbeat)
     target = *monitor->config.comm.monitor_task;
     if (target != NULL) {
         (void)xTaskNotify(target, 1UL << heartbeat.task_id, eSetBits);
+    }
+}
+
+static MonitorTaskStatus_t *Monitor_StatusOf(MonitorHeartbeat_t heartbeat)
+{
+    if (heartbeat.monitor == NULL ||
+        heartbeat.task_id >= heartbeat.monitor->config.param.task_count) {
+        return NULL;
+    }
+    return &heartbeat.monitor->task[heartbeat.task_id];
+}
+
+void Monitor_CycleBegin(MonitorHeartbeat_t heartbeat)
+{
+    MonitorTaskStatus_t *status = Monitor_StatusOf(heartbeat);
+
+    if (status != NULL) {
+        status->cycle_start = DWT_GetCycle();
+    }
+}
+
+void Monitor_CycleEnd(MonitorHeartbeat_t heartbeat)
+{
+    MonitorTaskStatus_t *status = Monitor_StatusOf(heartbeat);
+    uint32_t dt;
+
+    if (status == NULL) {
+        return;
+    }
+
+    dt = DWT_GetCycle() - status->cycle_start;
+    status->cycle_last = dt;
+    if (status->cycle_count == 0U || dt < status->cycle_min) {
+        status->cycle_min = dt;
+    }
+    if (dt > status->cycle_max) {
+        status->cycle_max = dt;
+    }
+    status->cycle_sum += dt;
+    ++status->cycle_count;
+}
+
+void Monitor_CycleReset(MonitorHeartbeat_t heartbeat)
+{
+    MonitorTaskStatus_t *status = Monitor_StatusOf(heartbeat);
+
+    if (status != NULL) {
+        status->cycle_last = 0U;
+        status->cycle_min = 0U;
+        status->cycle_max = 0U;
+        status->cycle_count = 0U;
+        status->cycle_sum = 0U;
     }
 }
 
