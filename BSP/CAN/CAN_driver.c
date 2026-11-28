@@ -14,7 +14,7 @@
 /* ==================== 临时调试：追 0x146 丢在哪一步 ==================== */
 /* 统计每个 ID 的入队、写入硬件 FIFO、接收次数，并记录失败事件。
  * 定位完成后把 CAN_DEBUG_TRACE 改成 0 就能整体关掉。 */
-#define CAN_DEBUG_TRACE             1
+#define CAN_DEBUG_TRACE             0
 
 #if CAN_DEBUG_TRACE
 #define CAN_DEBUG_ID_SLOTS          32U   /* 扫描 0x141~0x14A 时 ID 槽会被占满，留够 */
