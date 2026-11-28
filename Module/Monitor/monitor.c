@@ -93,22 +93,23 @@ void Monitor_CycleBegin(MonitorHeartbeat_t heartbeat)
 void Monitor_CycleEnd(MonitorHeartbeat_t heartbeat)
 {
     MonitorTaskStatus_t *status = Monitor_StatusOf(heartbeat);
-    uint32_t dt;
+    float dt_us;
 
     if (status == NULL) {
         return;
     }
 
-    dt = DWT_GetCycle() - status->cycle_start;
-    status->cycle_last = dt;
-    if (status->cycle_count == 0U || dt < status->cycle_min) {
-        status->cycle_min = dt;
+    dt_us = DWT_CycleToUs(DWT_GetCycle() - status->cycle_start);
+    status->time_last_us = dt_us;
+    if (status->time_count == 0U || dt_us < status->time_min_us) {
+        status->time_min_us = dt_us;
     }
-    if (dt > status->cycle_max) {
-        status->cycle_max = dt;
+    if (dt_us > status->time_max_us) {
+        status->time_max_us = dt_us;
     }
-    status->cycle_sum += dt;
-    ++status->cycle_count;
+    ++status->time_count;
+    /* Running average: no 64-bit sum needed */
+    status->time_avg_us += (dt_us - status->time_avg_us) / (float)status->time_count;
 }
 
 void Monitor_CycleReset(MonitorHeartbeat_t heartbeat)
@@ -116,11 +117,11 @@ void Monitor_CycleReset(MonitorHeartbeat_t heartbeat)
     MonitorTaskStatus_t *status = Monitor_StatusOf(heartbeat);
 
     if (status != NULL) {
-        status->cycle_last = 0U;
-        status->cycle_min = 0U;
-        status->cycle_max = 0U;
-        status->cycle_count = 0U;
-        status->cycle_sum = 0U;
+        status->time_last_us = 0.0f;
+        status->time_min_us = 0.0f;
+        status->time_max_us = 0.0f;
+        status->time_avg_us = 0.0f;
+        status->time_count = 0U;
     }
 }
 

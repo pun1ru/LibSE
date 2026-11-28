@@ -42,13 +42,13 @@ struct MonitorTaskStatus {
     uint32_t offline_count;         /* Consecutive offline evaluations */
     volatile uint32_t last_heartbeat_tick;
     uint8_t online;
-    /* Execution time statistics in CPU cycles (DWT CYCCNT) */
-    uint32_t cycle_start;           /* CYCCNT at Monitor_CycleBegin */
-    uint32_t cycle_last;            /* Last measured duration */
-    uint32_t cycle_min;
-    uint32_t cycle_max;
-    uint32_t cycle_count;           /* Number of measurements since reset */
-    uint64_t cycle_sum;             /* Sum for average: sum / count */
+    /* Execution time statistics, all durations in microseconds */
+    uint32_t cycle_start;           /* Raw CYCCNT at Monitor_CycleBegin (cycles) */
+    float time_last_us;             /* Last measured duration */
+    float time_min_us;
+    float time_max_us;
+    float time_avg_us;              /* Running average since reset */
+    uint32_t time_count;            /* Number of measurements since reset */
 };
 
 struct MonitorTaskConfig {
